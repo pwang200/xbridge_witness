@@ -13,16 +13,30 @@ xChainDBName()
 }
 
 std::string const&
-xChainMainToSideTableName()
+xChainLockingToIssuingTableName()
 {
-    static std::string const r{"XChainTxnMainToSide"};
+    static std::string const r{"XChainTxnLockingToIssuing"};
     return r;
 }
 
 std::string const&
-xChainSideToMainTableName()
+xChainCreateAccountLockingTableName()
 {
-    static std::string const r{"XChainTxnSideToMain"};
+    static std::string const r{"XChainTxnCreateAccountLocking"};
+    return r;
+}
+
+std::string const&
+xChainCreateAccountIssuingTableName()
+{
+    static std::string const r{"XChainTxnCreateAccountIssuing"};
+    return r;
+}
+
+std::string const&
+xChainIssuingToLockingTableName()
+{
+    static std::string const r{"XChainTxnIssuingToLocking"};
     return r;
 }
 
@@ -47,32 +61,72 @@ xChainDBInit()
 
         // DeliveredAmt is encoded as a serialized STAmount
         //              this is raw data - no encoded.
-        // Signature is hex encoded (without a leading 0x)
         // Success is a bool (but soci complains about using bools)
-        // Sidechain is encoded as a serialized STSidechain
 
         auto const tblFmtStr = R"sql(
             CREATE TABLE IF NOT EXISTS {table_name} (
-                TransID      CHARACTER(64) PRIMARY KEY,
-                LedgerSeq    BIGINT UNSIGNED,
-                XChainSeq    BIGINT UNSIGNED,
-                Success      UNSIGNED,
-                DeliveredAmt BLOB,
-                Sidechain    BLOB,
-                PublicKey    TEXT,
-                Signature    TEXT);
+                TransID           CHARACTER(64) PRIMARY KEY,
+                LedgerSeq         BIGINT UNSIGNED,
+                ClaimID           BIGINT UNSIGNED,
+                Success           UNSIGNED,
+                DeliveredAmt      BLOB,
+                Bridge            BLOB,
+                SendingAccount    BLOB,
+                RewardAccount     BLOB,
+                OtherChainAccount BLOB,
+                PublicKey         BLOB,
+                Signature         BLOB);
         )sql";
         auto const idxFmtStr = R"sql(
-            CREATE INDEX IF NOT EXISTS {table_name}XSeqIdx ON {table_name}(XChainSeq);",
+            CREATE INDEX IF NOT EXISTS {table_name}ClaimIDIdx ON {table_name}(ClaimID);",
         )sql";
+
+        auto const createAccTblFmtStr = R"sql(
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                TransID           CHARACTER(64) PRIMARY KEY,
+                LedgerSeq         BIGINT UNSIGNED,
+                CreateCount       BIGINT UNSIGNED,
+                Success           UNSIGNED,
+                DeliveredAmt      BLOB,
+                RewardAmt         BLOB,
+                Bridge            BLOB,
+                SendingAccount    BLOB,
+                RewardAccount     BLOB,
+                OtherChainAccount BLOB,
+                PublicKey         BLOB,
+                Signature         BLOB);
+        )sql";
+        auto const createAccIdxFmtStr = R"sql(
+            CREATE INDEX IF NOT EXISTS {table_name}CreateCountIdx ON {table_name}(CreateCount);",
+        )sql";
+
         r.push_back(fmt::format(
-            tblFmtStr, fmt::arg("table_name", xChainMainToSideTableName())));
+            tblFmtStr,
+            fmt::arg("table_name", xChainLockingToIssuingTableName())));
         r.push_back(fmt::format(
-            idxFmtStr, fmt::arg("table_name", xChainMainToSideTableName())));
+            idxFmtStr,
+            fmt::arg("table_name", xChainLockingToIssuingTableName())));
+
         r.push_back(fmt::format(
-            tblFmtStr, fmt::arg("table_name", xChainSideToMainTableName())));
+            tblFmtStr,
+            fmt::arg("table_name", xChainIssuingToLockingTableName())));
         r.push_back(fmt::format(
-            idxFmtStr, fmt::arg("table_name", xChainSideToMainTableName())));
+            idxFmtStr,
+            fmt::arg("table_name", xChainIssuingToLockingTableName())));
+
+        r.push_back(fmt::format(
+            createAccTblFmtStr,
+            fmt::arg("table_name", xChainCreateAccountLockingTableName())));
+        r.push_back(fmt::format(
+            createAccIdxFmtStr,
+            fmt::arg("table_name", xChainCreateAccountLockingTableName())));
+
+        r.push_back(fmt::format(
+            createAccTblFmtStr,
+            fmt::arg("table_name", xChainCreateAccountIssuingTableName())));
+        r.push_back(fmt::format(
+            createAccIdxFmtStr,
+            fmt::arg("table_name", xChainCreateAccountIssuingTableName())));
 
         r.push_back("END TRANSACTION;");
         return r;

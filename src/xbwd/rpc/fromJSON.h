@@ -5,19 +5,22 @@
 #include <ripple/protocol/AccountID.h>
 #include <ripple/protocol/SField.h>
 #include <ripple/protocol/STAmount.h>
-#include <ripple/protocol/STSidechain.h>
+#include <ripple/protocol/STXChainBridge.h>
 #include <ripple/protocol/SecretKey.h>
 #include <ripple/protocol/Seed.h>
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/filesystem.hpp>
 
+#include <charconv>
 #include <limits>
 #include <string>
 
 namespace xbwd {
 namespace rpc {
 
+// TODO: This is redundant with the `get_or_throw` functions. Remove one set.
+//
 // Construct a T from the specified json field. Throw if the key is not present
 template <class T>
 T
@@ -73,10 +76,43 @@ fromJson(Json::Value const& jv, char const* key)
     if (uInt > std::numeric_limits<std::uint32_t>::max())
     {
         throw std::runtime_error(
-            "json key: "s + key + " is too large for an uint16");
+            "json key: "s + key + " is too large for an uint32");
     }
 
     return static_cast<std::uint32_t>(uInt);
+}
+
+template <>
+inline std::uint64_t
+fromJson(Json::Value const& jv, char const* key)
+{
+    using namespace std::literals;
+    auto const v = jv[key];
+    if (v.isNull())
+        throw std::runtime_error(
+            "Expected json key: "s + key + " while constructing an uint64");
+
+    if (v.isString())
+    {
+        // parse as hex
+        auto const s = v.asString();
+        std::uint64_t val;
+
+        auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), val, 16);
+
+        if (ec != std::errc() || (p != s.data() + s.size()))
+            throw std::runtime_error(
+                "json key: "s + key + " can not be parsed as a uint64");
+        return val;
+    }
+    auto const uInt = v.asUInt();
+    if (uInt > std::numeric_limits<std::uint64_t>::max())
+    {
+        throw std::runtime_error(
+            "json key: "s + key + " is too large for an uint64");
+    }
+
+    return static_cast<std::uint64_t>(uInt);
 }
 
 template <>
@@ -117,8 +153,8 @@ fromJson(Json::Value const& jv, char const* key)
             " while constructing an IP::Endpoint");
 
     return beast::IP::Endpoint{
-        fromJson<boost::asio::ip::address>(v, "ip"),
-        fromJson<std::uint16_t>(v, "port")};
+        fromJson<boost::asio::ip::address>(v, "IP"),
+        fromJson<std::uint16_t>(v, "Port")};
 }
 
 template <>
@@ -159,7 +195,7 @@ fromJson(Json::Value const& jv, char const* key)
 }
 
 template <>
-inline ripple::STSidechain
+inline ripple::STXChainBridge
 fromJson(Json::Value const& jv, char const* key)
 {
     using namespace std::literals;
@@ -167,8 +203,7 @@ fromJson(Json::Value const& jv, char const* key)
     if (v.isNull())
         throw std::runtime_error(
             "Expected json key: "s + key + " while constructing a sidechain");
-    // TODO: Should this be sfSidechain or sfGeneric?
-    return ripple::STSidechainFromJson(ripple::sfGeneric, v);
+    return ripple::STXChainBridge(v);
 }
 
 template <>

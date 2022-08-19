@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ripple/protocol/KeyType.h"
-#include "ripple/protocol/STSidechain.h"
+#include "ripple/protocol/STXChainBridge.h"
 #include <xbwd/app/Config.h>
 #include <xbwd/core/DatabaseCon.h>
 
@@ -13,12 +13,13 @@
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/signal_set.hpp>
 
+#include <condition_variable>
 #include <optional>
 #include <thread>
 #include <vector>
 
 namespace ripple {
-class STSidechain;
+class STXChainBridge;
 class STAmount;
 }  // namespace ripple
 

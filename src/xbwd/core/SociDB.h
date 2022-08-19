@@ -27,13 +27,18 @@
     This module requires the @ref beast_sqlite external module.
 */
 
+#include <stdexcept>
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated"
 #endif
 
+#include <ripple/basics/Buffer.h>
 #include <ripple/basics/Log.h>
-#include <ripple/core/JobQueue.h>
+#include <ripple/basics/base_uint.h>
+#include <ripple/protocol/PublicKey.h>
+#include <ripple/protocol/STAmount.h>
+#include <ripple/protocol/STXChainBridge.h>
 
 #define SOCI_USE_BOOST
 #include <cstdint>
@@ -69,12 +74,55 @@ getKBUsedDB(soci::session& s);
 
 void
 convert(soci::blob& from, std::vector<std::uint8_t>& to);
-void
-convert(soci::blob& from, std::string& to);
+
 void
 convert(std::vector<std::uint8_t> const& from, soci::blob& to);
+
+void
+convert(soci::blob& from, ripple::Buffer& to);
+
+void
+convert(ripple::Buffer const& from, soci::blob& to);
+
+void
+convert(soci::blob& from, std::string& to);
+
 void
 convert(std::string const& from, soci::blob& to);
+
+void
+convert(ripple::PublicKey const& from, soci::blob& to);
+
+void
+convert(soci::blob& from, ripple::PublicKey& to);
+
+void
+convert(ripple::STAmount const& from, soci::blob& to);
+
+void
+convert(soci::blob& from, ripple::STAmount& to, ripple::SField const& f);
+
+void
+convert(ripple::STXChainBridge const& from, soci::blob& to);
+
+void
+convert(soci::blob& from, ripple::STXChainBridge& to, ripple::SField const& f);
+
+template <std::size_t Bits, class Tag = void>
+void
+convert(soci::blob& from, ripple::base_uint<Bits, Tag>& to)
+{
+    if (to.size() != from.get_len())
+        throw std::runtime_error("Soci blob size mismatch");
+    from.read(0, reinterpret_cast<char*>(to.data()), from.get_len());
+}
+
+template <std::size_t Bits, class Tag = void>
+void
+convert(ripple::base_uint<Bits, Tag> const& from, soci::blob& to)
+{
+    to.write(0, reinterpret_cast<char const*>(from.data()), from.size());
+}
 
 }  // namespace xbwd
 

@@ -12,10 +12,18 @@ namespace db_init {
 // Ledger database holds ledgers and ledger confirmations
 std::string const&
 xChainDBName();
+
 std::string const&
-xChainMainToSideTableName();
+xChainLockingToIssuingTableName();
+
 std::string const&
-xChainSideToMainTableName();
+xChainIssuingToLockingTableName();
+
+std::string const&
+xChainCreateAccountLockingTableName();
+
+std::string const&
+xChainCreateAccountIssuingTableName();
 
 std::vector<std::string> const&
 xChainDBPragma();

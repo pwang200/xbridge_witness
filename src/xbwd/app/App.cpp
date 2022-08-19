@@ -10,7 +10,7 @@
 
 #include <ripple/beast/core/CurrentThreadName.h>
 #include <ripple/protocol/STAmount.h>
-#include <ripple/protocol/STSidechain.h>
+#include <ripple/protocol/STXChainBridge.h>
 #include <ripple/protocol/STXChainClaimProof.h>
 
 namespace xbwd {
@@ -44,11 +44,13 @@ App::App(config::Config const& config, beast::severities::Severity logLevel)
         federator_ = make_Federator(
             *this,
             get_io_service(),
-            config.sidechain,
+            config.bridge,
             config.keyType,
             config.signingKey,
-            config.mainchainIp,
-            config.sidechainIp,
+            config.lockingchainIp,
+            config.issuingchainIp,
+            config.lockingChainRewardAccount,
+            config.issuingChainRewardAccount,
             logs_.journal("Federator"));
 
         serverHandler_ = std::make_unique<rpc::ServerHandler>(

@@ -1,6 +1,7 @@
 import binascii
 import datetime
 import logging
+import json
 from typing import List, Optional, Union
 import pandas as pd
 import pytz
@@ -336,51 +337,61 @@ class Issue:
         return result
 
 
-class Sidechain:
-    """Parameters for a sidechain"""
+class Bridge:
+    """Parameters for an xchain bridge"""
 
     def __init__(
         self,
         *,
-        mainchain_door: Optional[Account] = None,
-        mainchain_issue: Optional[Issue] = None,
-        sidechain_door: Optional[Account] = None,
-        sidechain_issue: Optional[Issue] = None,
+        locking_chain_door: Optional[Account] = None,
+        locking_chain_issue: Optional[Issue] = None,
+        issuing_chain_door: Optional[Account] = None,
+        issuing_chain_issue: Optional[Issue] = None,
         from_rpc_result: Optional[dict] = None,
     ):
         is_dict = from_rpc_result is not None
         is_individual = (
-            mainchain_door is not None
-            and mainchain_issue is not None
-            and sidechain_door is not None
-            and sidechain_issue is not None
+            locking_chain_door is not None
+            and locking_chain_issue is not None
+            and issuing_chain_door is not None
+            and issuing_chain_issue is not None
         )
         assert is_dict != is_individual
 
         if is_dict:
-            self.mainchain_door = Account(account_id=from_rpc_result["src_chain_door"])
-            self.mainchain_issue = Issue(
-                from_rpc_result=from_rpc_result["src_chain_issue"]
+            self.locking_chain_door = Account(
+                account_id=from_rpc_result["LockingChainDoor"]
             )
-            self.sidechain_door = Account(account_id=from_rpc_result["dst_chain_door"])
-            self.sidechain_issue = Issue(
-                from_rpc_result=from_rpc_result["dst_chain_issue"]
+            self.locking_chain_issue = Issue(
+                from_rpc_result=from_rpc_result["LockingChainIssue"]
+            )
+            self.issuing_chain_door = Account(
+                account_id=from_rpc_result["IssuingChainDoor"]
+            )
+            self.issuing_chain_issue = Issue(
+                from_rpc_result=from_rpc_result["IssuingChainIssue"]
             )
         else:
-            self.mainchain_door = mainchain_door
-            self.mainchain_issue = mainchain_issue
-            self.sidechain_door = sidechain_door
-            self.sidechain_issue = sidechain_issue
+            self.locking_chain_door = locking_chain_door
+            self.locking_chain_issue = locking_chain_issue
+            self.issuing_chain_door = issuing_chain_door
+            self.issuing_chain_issue = issuing_chain_issue
 
     def to_cmd_obj(self) -> dict:
         """Return an object suitalbe for use in a command"""
         result = {
-            "src_chain_door": self.mainchain_door.account_id,
-            "src_chain_issue": self.mainchain_issue.to_cmd_obj(),
-            "dst_chain_door": self.sidechain_door.account_id,
-            "dst_chain_issue": self.sidechain_issue.to_cmd_obj(),
+            "LockingChainDoor": self.locking_chain_door.account_id,
+            "LockingChainIssue": self.locking_chain_issue.to_cmd_obj(),
+            "IssuingChainDoor": self.issuing_chain_door.account_id,
+            "IssuingChainIssue": self.issuing_chain_issue.to_cmd_obj(),
         }
         return result
+
+    def __str__(self) -> str:
+        return json.dumps(self.to_cmd_obj(), indent=1)
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 class XChainClaimProof:
@@ -388,7 +399,7 @@ class XChainClaimProof:
 
     def __init__(
         self,
-        sidechain: Optional[Sidechain] = None,
+        sidechain: Optional[Bridge] = None,
         amount: Optional[Asset] = None,
         # signatures dict has keys: "signature" and "signing_key"
         signatures: Optional[List[dict]] = None,
@@ -408,9 +419,9 @@ class XChainClaimProof:
         assert is_dict != is_individual
 
         if is_dict:
-            self.sidechain = Sidechain(from_rpc_result=from_rpc_result["sidechain"])
+            self.sidechain = Bridge(from_rpc_result=from_rpc_result["sidechain"])
             self.amount = Asset(from_rpc_result=from_rpc_result["amount"])
-            self.wasSrcSend = from_rpc_result["was_src_chain_send"]
+            self.wasSrcSend = from_rpc_result["was_locking_chain_send"]
             self.signatures = from_rpc_result["signatures"]
             self.xChainSeq = from_rpc_result["xchain_seq"]
         else:
@@ -426,7 +437,7 @@ class XChainClaimProof:
             "sidechain": self.sidechain.to_cmd_obj(),
             "amount": self.amount.to_cmd_obj(),
             "signatures": self.signatures,
-            "was_src_chain_send": self.wasSrcSend,
+            "was_locking_chain_send": self.wasSrcSend,
             "xchain_seq": self.xChainSeq,
         }
         return result

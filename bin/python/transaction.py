@@ -8,7 +8,7 @@ from common import (
     Asset,
     Path,
     PathList,
-    Sidechain,
+    Bridge,
     XChainClaimProof,
     to_rippled_epoch,
 )
@@ -387,88 +387,83 @@ class SetHook(Transaction):
         return txn
 
 
-class SidechainCreate(Transaction):
+class XChainCreateBridge(Transaction):
     def __init__(
         self,
         *,
-        sidechain: Sidechain,
-        keys: List[str],
-        weights: Optional[List[int]] = None,
-        quorum: int,
+        bridge: Bridge,
+        reward: Asset,
+        min_account_create: Optional[Asset] = None,
         **rest,
     ):
         super().__init__(**rest)
-        self.sidechain = sidechain
-        self.keys = keys
-        if weights is None:
-            self.weights = [1] * len(self.keys)
-        else:
-            if len(weights) != len(keys):
-                raise f"Length of weights must match length of keys: {len(weights)} != {len(keys)}"
-            self.weights = weights
-        self.quorum = quorum
+        self.bridge = bridge
+        self.reward = reward
+        self.min_account_create = min_account_create
 
     def to_cmd_obj(self) -> dict:
         txn = super().to_cmd_obj()
         txn = {
             **txn,
-            "TransactionType": "SidechainCreate",
-            "Sidechain": self.sidechain.to_cmd_obj(),
-            "SignerQuorum": self.quorum,
+            "TransactionType": "XChainCreateBridge",
+            "XChainBridge": self.bridge.to_cmd_obj(),
+            "SignatureReward": self.reward.to_cmd_obj(),
         }
-        entries = []
-        for k, w in zip(self.keys, self.weights):
-            entries.append({"SignerEntry": {"Account": k, "SignerWeight": w}})
-        txn["SignerEntries"] = entries
+        if self.min_account_create is not None:
+            txn["MinAccountCreateAmount"] = self.min_account_create.to_cmd_obj()
         return txn
 
 
-class SidechainXChainSeqNumCreate(Transaction):
-    def __init__(self, *, sidechain: Sidechain, **rest):
+class XChainCreateClaimID(Transaction):
+    def __init__(
+        self, *, bridge: Bridge, reward: Asset, other_chain_account: Account, **rest
+    ):
         super().__init__(**rest)
-        self.sidechain = sidechain
+        self.bridge = bridge
+        self.reward = reward
+        self.other_chain_account = other_chain_account
 
     def to_cmd_obj(self) -> dict:
         txn = super().to_cmd_obj()
         txn = {
             **txn,
-            "TransactionType": "SidechainXChainSeqNumCreate",
-            "Sidechain": self.sidechain.to_cmd_obj(),
+            "TransactionType": "XChainCreateClaimID",
+            "XChainBridge": self.bridge.to_cmd_obj(),
+            "SignatureReward": self.reward.to_cmd_obj(),
+            "OtherChainAccount": self.other_chain_account.account_id,
         }
         return txn
 
 
-class SidechainXChainTransfer(Transaction):
-    def __init__(self, *, sidechain: Sidechain, xChainSeq: int, amount: Asset, **rest):
+class XChainCommit(Transaction):
+    def __init__(self, *, bridge: Bridge, claimID: int, amount: Asset, **rest):
         super().__init__(**rest)
-        self.sidechain = sidechain
-        self.xChainSeq = xChainSeq
+        self.bridge = bridge
+        self.claimID = claimID
         self.amount = amount
 
     def to_cmd_obj(self) -> dict:
         txn = super().to_cmd_obj()
         txn = {
             **txn,
-            "TransactionType": "SidechainXChainTransfer",
-            "Sidechain": self.sidechain.to_cmd_obj(),
+            "TransactionType": "XChainCommit",
+            "XChainBridge": self.bridge.to_cmd_obj(),
             "Amount": self.amount.to_cmd_obj(),
-            "XChainSequence": self.xChainSeq,
+            "XChainClaimID": self.claimID,
         }
         return txn
 
 
-class SidechainXChainClaim(Transaction):
-    def __init__(self, *, proof: XChainClaimProof, dst: Account, **rest):
+class XChainClaim(Transaction):
+    def __init__(self, *, dst: Account, **rest):
         super().__init__(**rest)
-        self.proof = proof
         self.dst = dst
 
     def to_cmd_obj(self) -> dict:
         txn = super().to_cmd_obj()
         txn = {
             **txn,
-            "TransactionType": "SidechainXChainClaim",
-            "XChainClaimProof": self.proof.to_cmd_obj(),
+            "TransactionType": "XChainClaim",
             "Destination": self.dst.account_id,
         }
         return txn
