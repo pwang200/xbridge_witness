@@ -479,7 +479,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
         auto sql = fmt::format(
             R"sql(INSERT INTO {table_name}
                   (TransID, LedgerSeq, CreateCount, Success, DeliveredAmt, RewardAmt, Bridge,
-                   SendingAccount, RewardAccount, otherChainAccountBlob, PublicKey, Signature)
+                   SendingAccount, RewardAccount, otherChainAccount, PublicKey, Signature)
                   VALUES
                   (:txnId, :lgrSeq, :createCount, :success, :amt, :rewardAmt, :bridge,
                    :sendingAccount, :rewardAccount, :otherChainAccount, :pk, :sig);
