@@ -430,7 +430,7 @@ class XChainCreateClaimID(Transaction):
             "TransactionType": "XChainCreateClaimID",
             "XChainBridge": self.bridge.to_cmd_obj(),
             "SignatureReward": self.reward.to_cmd_obj(),
-            "OtherChainAccount": self.other_chain_account.account_id,
+            "OtherChainSource": self.other_chain_account.account_id,
         }
         return txn
 

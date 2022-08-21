@@ -67,7 +67,7 @@ doSelectAll(
         soci::blob bridgeBlob(*session);
         soci::blob sendingAccountBlob(*session);
         soci::blob rewardAccountBlob(*session);
-        soci::blob otherChainAccountBlob(*session);
+        soci::blob otherChainDstBlob(*session);
         soci::blob publicKeyBlob(*session);
         soci::blob signatureBlob(*session);
 
@@ -78,12 +78,12 @@ doSelectAll(
 
         auto sql = fmt::format(
             R"sql(SELECT TransID, LedgerSeq, ClaimID, Success, DeliveredAmt,
-                         Bridge, SendingAccount, RewardAccount, OtherChainAccount,
+                         Bridge, SendingAccount, RewardAccount, OtherChainDst,
                          PublicKey, Signature FROM {table_name};
             )sql",
             fmt::arg("table_name", tblName));
 
-        soci::indicator otherChainAccountInd;
+        soci::indicator otherChainDstInd;
         soci::statement st =
             ((*session).prepare << sql,
              soci::into(transID),
@@ -94,7 +94,7 @@ doSelectAll(
              soci::into(bridgeBlob),
              soci::into(sendingAccountBlob),
              soci::into(rewardAccountBlob),
-             soci::into(otherChainAccountBlob, otherChainAccountInd),
+             soci::into(otherChainDstBlob, otherChainDstInd),
              soci::into(publicKeyBlob),
              soci::into(signatureBlob));
         st.execute();
@@ -120,10 +120,10 @@ doSelectAll(
             convert(rewardAccountBlob, rewardAccount);
 
             std::optional<ripple::AccountID> optDst;
-            if (otherChainAccountInd == soci::i_ok)
+            if (otherChainDstInd == soci::i_ok)
             {
                 optDst.emplace();
-                convert(otherChainAccountBlob, *optDst);
+                convert(otherChainDstBlob, *optDst);
             }
 
             convert(bridgeBlob, bridge, ripple::sfXChainBridge);
@@ -227,7 +227,7 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
         soci::blob bridgeBlob(*session);
         soci::blob sendingAccountBlob(*session);
         soci::blob rewardAccountBlob(*session);
-        soci::blob otherChainAccountBlob(*session);
+        soci::blob otherChainDstBlob(*session);
         soci::blob publicKeyBlob(*session);
         soci::blob signatureBlob(*session);
 
@@ -237,7 +237,7 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
         soci::indicator sigInd;
         if (optDst)
         {
-            convert(*optDst, otherChainAccountBlob);
+            convert(*optDst, otherChainDstBlob);
 
             auto sql = fmt::format(
                 R"sql(SELECT Signature, PublicKey, RewardAccount FROM {table_name}
@@ -246,7 +246,7 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
                         DeliveredAmt = :amt and
                         Bridge = :bridge and
                         SendingAccount = :sendingAccount and
-                        OtherChainAccount = :otherChainAccount;
+                        OtherChainDst = :otherChainDst;
             )sql",
                 fmt::arg("table_name", tblName));
 
@@ -254,12 +254,12 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
                 soci::into(publicKeyBlob), soci::into(rewardAccountBlob),
                 soci::use(*optClaimID), soci::use(amtBlob),
                 soci::use(bridgeBlob), soci::use(sendingAccountBlob),
-                soci::use(otherChainAccountBlob);
+                soci::use(otherChainDstBlob);
         }
         else
         {
             auto sql = fmt::format(
-                R"sql(SELECT Signature, PublicKey, RewardAccount, OtherChainAccount FROM {table_name}
+                R"sql(SELECT Signature, PublicKey, RewardAccount, OtherChainDst FROM {table_name}
                   WHERE ClaimID = :claimID and
                         Success = 1 and
                         DeliveredAmt = :amt and
@@ -268,17 +268,17 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
             )sql",
                 fmt::arg("table_name", tblName));
 
-            soci::indicator otherChainAccountInd;
+            soci::indicator otherChainDstInd;
             *session << sql, soci::into(signatureBlob, sigInd),
                 soci::into(publicKeyBlob), soci::into(rewardAccountBlob),
-                soci::into(otherChainAccountBlob, otherChainAccountInd),
+                soci::into(otherChainDstBlob, otherChainDstInd),
                 soci::use(*optClaimID), soci::use(amtBlob),
                 soci::use(bridgeBlob), soci::use(sendingAccountBlob);
 
-            if (otherChainAccountInd == soci::i_ok)
+            if (otherChainDstInd == soci::i_ok)
             {
                 optDst.emplace();
-                convert(otherChainAccountBlob, *optDst);
+                convert(otherChainDstBlob, *optDst);
             }
         }
 
@@ -410,8 +410,8 @@ doWitnessAccountCreate(App& app, Json::Value const& in, Json::Value& result)
         soci::blob sendingAccountBlob(*session);
         convert(sendingAccount, sendingAccountBlob);
 
-        soci::blob otherChainAccountBlob(*session);
-        convert(dst, otherChainAccountBlob);
+        soci::blob otherChainDstBlob(*session);
+        convert(dst, otherChainDstBlob);
 
         soci::blob rewardAccountBlob(*session);
         soci::blob publicKeyBlob(*session);
@@ -425,14 +425,14 @@ doWitnessAccountCreate(App& app, Json::Value const& in, Json::Value& result)
                         RewardAmt = :rewardAmt and
                         Bridge = :bridge and
                         SendingAccount = :sendingAccount and
-                        OtherChainAccount = :otherChainAccount;
+                        OtherChainDst = :otherChainDst;
             )sql",
             fmt::arg("table_name", tblName));
 
         *session << sql, soci::into(signatureBlob), soci::into(publicKeyBlob),
             soci::into(rewardAccountBlob), soci::use(createCount),
             soci::use(amtBlob), soci::use(rewardAmtBlob), soci::use(bridgeBlob),
-            soci::use(sendingAccountBlob), soci::use(otherChainAccountBlob);
+            soci::use(sendingAccountBlob), soci::use(otherChainDstBlob);
 
         // TODO: Check for multiple values
         if (signatureBlob.get_len() > 0 && publicKeyBlob.get_len() > 0 &&
@@ -469,7 +469,7 @@ doWitnessAccountCreate(App& app, Json::Value const& in, Json::Value& result)
     }
 }
 
-enum class Role {USER, ADMIN};
+enum class Role { USER, ADMIN };
 
 struct CmdFun
 {
@@ -483,7 +483,8 @@ std::unordered_map<std::string, CmdFun> const handlers = [] {
     r.emplace("stop"s, CmdFun{doStop, Role::ADMIN});
     r.emplace("server_info"s, CmdFun{doServerInfo, Role::USER});
     r.emplace("witness"s, CmdFun{doWitness, Role::USER});
-    r.emplace("witness_account_create"s, CmdFun{doWitnessAccountCreate, Role::USER});
+    r.emplace(
+        "witness_account_create"s, CmdFun{doWitnessAccountCreate, Role::USER});
     r.emplace("select_all_locking"s, CmdFun{doSelectAllLocking, Role::USER});
     r.emplace("select_all_issuing"s, CmdFun{doSelectAllIssuing, Role::USER});
     return r;
@@ -523,7 +524,7 @@ isAdmin(
     }
 
     // return true if no need to check IP
-    if(ac.addresses.empty() && ac.netsV4.empty() && ac.netsV6.empty())
+    if (ac.addresses.empty() && ac.netsV4.empty() && ac.netsV6.empty())
         return true;
 
     if (ac.addresses.count(remoteIp) != 0)
@@ -540,7 +541,9 @@ isAdmin(
                     .address())
                 return true;
         }
-    }else{
+    }
+    else
+    {
         for (auto const& net : ac.netsV6)
         {
             if (net.canonical().address() ==
@@ -580,7 +583,7 @@ doCommand(
     }
 
     if (it->second.role == Role::ADMIN &&
-        ! isAdmin(app.config().adminConf, in, remoteIPAddress.address()))
+        !isAdmin(app.config().adminConf, in, remoteIPAddress.address()))
     {
         result["error"] =
             fmt::format("{} method requires ADMIN privilege.", cmd);

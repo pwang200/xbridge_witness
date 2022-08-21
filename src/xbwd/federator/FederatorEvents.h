@@ -42,7 +42,7 @@ struct XChainCommitDetected
     ripple::STXChainBridge bridge_;
     std::optional<ripple::STAmount> deliveredAmt_;
     std::uint64_t claimID_;
-    std::optional<ripple::AccountID> otherChainAccount_;
+    std::optional<ripple::AccountID> otherChainDst_;
 
     std::uint32_t ledgerSeq_;
     ripple::uint256 txnHash_;
@@ -63,7 +63,7 @@ struct XChainAccountCreateCommitDetected
     std::optional<ripple::STAmount> deliveredAmt_;
     ripple::STAmount rewardAmt_;
     std::uint64_t createCount_;
-    ripple::AccountID otherChainAccount_;
+    ripple::AccountID otherChainDst_;
 
     std::uint32_t ledgerSeq_;
     ripple::uint256 txnHash_;

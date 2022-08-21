@@ -65,8 +65,8 @@ XChainCommitDetected::toJson() const
     Json::Value result{Json::objectValue};
     result["eventType"] = "XChainTransferDetected";
     result["src"] = toBase58(src_);
-    if (otherChainAccount_)
-        result["otherChainAccount"] = toBase58(*otherChainAccount_);
+    if (otherChainDst_)
+        result["otherChainDst"] = toBase58(*otherChainDst_);
     if (deliveredAmt_)
         result["deliveredAmt"] =
             deliveredAmt_->getJson(ripple::JsonOptions::none);
@@ -82,7 +82,7 @@ XChainAccountCreateCommitDetected::toJson() const
     Json::Value result{Json::objectValue};
     result["eventType"] = "XChainAccountCreateCommitDetected";
     result["src"] = toBase58(src_);
-    result["otherChainAccount"] = toBase58(otherChainAccount_);
+    result["otherChainDst"] = toBase58(otherChainDst_);
     if (deliveredAmt_)
         result["deliveredAmt"] =
             deliveredAmt_->getJson(ripple::JsonOptions::none);

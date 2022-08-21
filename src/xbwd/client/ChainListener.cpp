@@ -495,7 +495,7 @@ ChainListener::processMessage(Json::Value const& msg)
                 case TxnType::xChainCommit:
                     return ripple::parseBase58<ripple::AccountID>(
                         msg[ripple::jss::transaction]
-                           [ripple::sfOtherChainAccount.getJsonName()]
+                           [ripple::sfOtherChainDestination.getJsonName()]
                                .asString());
             }
         }

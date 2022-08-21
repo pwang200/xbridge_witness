@@ -209,7 +209,7 @@ Federator::onEvent(event::XChainCommitDetected const& e)
     auto const& rewardAccount = wasLockingChainSend
         ? issuingChainRewardAccount_
         : lockingChainRewardAccount_;
-    auto const& optDst = e.otherChainAccount_;
+    auto const& optDst = e.otherChainDst_;
 
     auto const sigOpt = [&]() -> std::optional<ripple::Buffer> {
         if (!success)
@@ -303,26 +303,26 @@ Federator::onEvent(event::XChainCommitDetected const& e)
             convert(*sigOpt, signatureBlob);
         }
 
-        soci::blob otherChainAccountBlob(*session);
+        soci::blob otherChainDstBlob(*session);
         if (optDst)
         {
-            convert(*optDst, otherChainAccountBlob);
+            convert(*optDst, otherChainDstBlob);
         }
 
         auto sql = fmt::format(
             R"sql(INSERT INTO {table_name}
                   (TransID, LedgerSeq, ClaimID, Success, DeliveredAmt, Bridge,
-                   SendingAccount, RewardAccount, OtherChainAccount, PublicKey, Signature)
+                   SendingAccount, RewardAccount, OtherChainDst, PublicKey, Signature)
                   VALUES
                   (:txnId, :lgrSeq, :claimID, :success, :amt, :bridge,
-                   :sendingAccount, :rewardAccount, :otherChainAccount, :pk, :sig);
+                   :sendingAccount, :rewardAccount, :otherChainDst, :pk, :sig);
             )sql",
             fmt::arg("table_name", tblName));
 
         *session << sql, soci::use(txnIdHex), soci::use(e.ledgerSeq_),
             soci::use(e.claimID_), soci::use(success), soci::use(amtBlob),
             soci::use(bridgeBlob), soci::use(sendingAccountBlob),
-            soci::use(rewardAccountBlob), soci::use(otherChainAccountBlob),
+            soci::use(rewardAccountBlob), soci::use(otherChainDstBlob),
             soci::use(publicKeyBlob), soci::use(signatureBlob);
     }
 }
@@ -366,7 +366,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
     auto const& rewardAccount = wasLockingChainSend
         ? issuingChainRewardAccount_
         : lockingChainRewardAccount_;
-    auto const& dst = e.otherChainAccount_;
+    auto const& dst = e.otherChainDst_;
 
     auto const sigOpt = [&]() -> std::optional<ripple::Buffer> {
         if (!success)
@@ -473,16 +473,16 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
             convert(*sigOpt, signatureBlob);
         }
 
-        soci::blob otherChainAccountBlob(*session);
-        convert(dst, otherChainAccountBlob);
+        soci::blob otherChainDstBlob(*session);
+        convert(dst, otherChainDstBlob);
 
         auto sql = fmt::format(
             R"sql(INSERT INTO {table_name}
                   (TransID, LedgerSeq, CreateCount, Success, DeliveredAmt, RewardAmt, Bridge,
-                   SendingAccount, RewardAccount, otherChainAccount, PublicKey, Signature)
+                   SendingAccount, RewardAccount, otherChainDst, PublicKey, Signature)
                   VALUES
                   (:txnId, :lgrSeq, :createCount, :success, :amt, :rewardAmt, :bridge,
-                   :sendingAccount, :rewardAccount, :otherChainAccount, :pk, :sig);
+                   :sendingAccount, :rewardAccount, :otherChainDst, :pk, :sig);
             )sql",
             fmt::arg("table_name", tblName));
 
@@ -490,7 +490,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
             soci::use(e.createCount_), soci::use(success), soci::use(amtBlob),
             soci::use(rewardAmtBlob), soci::use(bridgeBlob),
             soci::use(sendingAccountBlob), soci::use(rewardAccountBlob),
-            soci::use(otherChainAccountBlob), soci::use(publicKeyBlob),
+            soci::use(otherChainDstBlob), soci::use(publicKeyBlob),
             soci::use(signatureBlob);
     }
 }

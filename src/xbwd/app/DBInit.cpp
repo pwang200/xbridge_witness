@@ -73,7 +73,7 @@ xChainDBInit()
                 Bridge            BLOB,
                 SendingAccount    BLOB,
                 RewardAccount     BLOB,
-                OtherChainAccount BLOB,
+                OtherChainDst     BLOB,
                 PublicKey         BLOB,
                 Signature         BLOB);
         )sql";
@@ -92,7 +92,7 @@ xChainDBInit()
                 Bridge            BLOB,
                 SendingAccount    BLOB,
                 RewardAccount     BLOB,
-                OtherChainAccount BLOB,
+                OtherChainDst     BLOB,
                 PublicKey         BLOB,
                 Signature         BLOB);
         )sql";
