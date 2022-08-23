@@ -66,6 +66,7 @@ App::App(
             config_->issuingchainIp,
             config_->lockingChainRewardAccount,
             config_->issuingChainRewardAccount,
+            config_->witnessSubmit,
             logs_.journal("Federator"));
 
         serverHandler_ = std::make_unique<rpc::ServerHandler>(

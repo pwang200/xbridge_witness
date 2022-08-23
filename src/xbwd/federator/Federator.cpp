@@ -54,6 +54,7 @@ make_Federator(
     beast::IP::Endpoint const& sidechainIp,
     ripple::AccountID lockingChainRewardAccount,
     ripple::AccountID issuingChainRewardAccount,
+    bool witnessSubmit,
     beast::Journal j)
 {
     auto r = std::make_shared<Federator>(
@@ -64,6 +65,7 @@ make_Federator(
         signingKey,
         lockingChainRewardAccount,
         issuingChainRewardAccount,
+        witnessSubmit,
         j);
 
     std::shared_ptr<ChainListener> mainchainListener =
@@ -90,6 +92,7 @@ Federator::Federator(
     ripple::SecretKey const& signingKey,
     ripple::AccountID lockingChainRewardAccount,
     ripple::AccountID issuingChainRewardAccount,
+    bool witnessSubmit,
     beast::Journal j)
     : app_{app}
     , sidechain_{sidechain}
@@ -98,6 +101,8 @@ Federator::Federator(
     , signingSK_{signingKey}
     , lockingChainRewardAccount_{lockingChainRewardAccount}
     , issuingChainRewardAccount_{issuingChainRewardAccount}
+    , witnessSubmit_(witnessSubmit)
+    , submitAccountStr_(ripple::toBase58(ripple::calcAccountID(signingPK_)))
     , j_(j)
 {
     events_.reserve(16);
@@ -325,6 +330,66 @@ Federator::onEvent(event::XChainCommitDetected const& e)
             soci::use(rewardAccountBlob), soci::use(otherChainDstBlob),
             soci::use(publicKeyBlob), soci::use(signatureBlob);
     }
+
+    if (witnessSubmit_)
+    {
+        auto& attests =
+            wasLockingChainSend ? toSidechainClaim_ : toMainchainClaim_;
+        if (sigOpt)
+        {
+            // auto const& bridge = e.bridge_;
+            auto const& sendingAccount = e.src_;
+            auto const& sendingAmount = *e.deliveredAmt_;
+            auto const& claimID = e.claimID_;
+            attests.emplace_back(
+                signingPK_,
+                *sigOpt,
+                sendingAccount,
+                sendingAmount,
+                rewardAccount,
+                wasLockingChainSend,
+                claimID,
+                optDst);
+        }
+        submit(wasLockingChainSend, e.ledgerBoundary_);
+    }
+}
+
+void
+Federator::submit(bool fromLockingChain, bool ledgerBoundary)
+{
+    auto& claims = fromLockingChain ? toSidechainClaim_ : toMainchainClaim_;
+    auto& createAccounts = fromLockingChain ? toSidechainCreateAccount_
+                                            : toMainchainCreateAccount_;
+    auto& ws = fromLockingChain ? sidechainListener_ : mainchainListener_;
+    if ((ledgerBoundary && !(claims.empty() && createAccounts.empty())) ||
+        (claims.size() + createAccounts.size() >= 8))
+    {
+        ripple::STXChainAttestationBatch batch{
+            sidechain_,
+            claims.begin(),
+            claims.end(),
+            createAccounts.begin(),
+            createAccounts.end()};
+        Json::Value txJson;
+        txJson[ripple::jss::Account] = submitAccountStr_;
+        txJson[ripple::jss::TransactionType] = "XChainAddAttestation";
+        txJson["XChainAttestationBatch"] =
+            batch.getJson(ripple::JsonOptions::none);
+        Json::Value params;
+        params["tx_json"] = txJson;
+        params[ripple::jss::secret] =
+            ripple::toBase58(ripple::TokenType::AccountSecret, signingSK_);
+        //"tx_json": {
+        //            "Account": bob.account_id,
+        //            "TransactionType": "XChainAddAttestation",
+        //            "XChainAttestationBatch": xchain_attestation_batch
+        //},
+        //"secret" : bob.master_seed
+        ws->send("submit", params);
+        claims.clear();
+        createAccounts.clear();
+    }
 }
 
 void
@@ -492,6 +557,32 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
             soci::use(sendingAccountBlob), soci::use(rewardAccountBlob),
             soci::use(otherChainDstBlob), soci::use(publicKeyBlob),
             soci::use(signatureBlob);
+    }
+
+    if (witnessSubmit_)
+    {
+        auto& attests = wasLockingChainSend ? toSidechainCreateAccount_
+                                            : toMainchainCreateAccount_;
+        if (sigOpt)
+        {
+            // auto const& bridge = e.bridge_;
+            auto const& sendingAccount = e.src_;
+            auto const& sendingAmount = *e.deliveredAmt_;
+            auto const& createCount = e.createCount_;
+            auto const& rewardAmount = e.rewardAmt_;
+
+            attests.emplace_back(
+                signingPK_,
+                *sigOpt,
+                sendingAccount,
+                sendingAmount,
+                rewardAmount,
+                rewardAccount,
+                wasLockingChainSend,
+                createCount,
+                dst);
+        }
+        submit(wasLockingChainSend, e.ledgerBoundary_);
     }
 }
 

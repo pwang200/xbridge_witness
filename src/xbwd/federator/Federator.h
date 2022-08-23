@@ -26,6 +26,7 @@
 #include <ripple/beast/utility/Journal.h>
 #include <ripple/json/json_value.h>
 #include <ripple/protocol/PublicKey.h>
+#include <ripple/protocol/STXChainAttestationBatch.h>
 #include <ripple/protocol/SecretKey.h>
 
 #include <boost/asio.hpp>
@@ -56,6 +57,13 @@ class Federator : public std::enable_shared_from_this<Federator>
     ripple::AccountID lockingChainRewardAccount_;
     ripple::AccountID issuingChainRewardAccount_;
 
+    const bool witnessSubmit_;
+    std::string const submitAccountStr_;
+    std::vector<ripple::AttestationBatch::AttestationClaim> toMainchainClaim_;
+    std::vector<ripple::AttestationBatch::AttestationClaim> toSidechainClaim_;
+    std::vector<ripple::AttestationBatch::AttestationCreateAccount> toMainchainCreateAccount_;
+    std::vector<ripple::AttestationBatch::AttestationCreateAccount> toSidechainCreateAccount_;
+
     // Use a condition variable to prevent busy waiting when the queue is
     // empty
     mutable std::mutex m_;
@@ -85,6 +93,7 @@ public:
         ripple::SecretKey const& signingKey,
         ripple::AccountID lockingChainRewardAccount,
         ripple::AccountID issuingChainRewardAccount,
+        bool witnessSubmit,
         beast::Journal j);
 
     ~Federator();
@@ -131,6 +140,9 @@ private:
     void
     onEvent(event::HeartbeatTimer const& e);
 
+    void
+    submit(bool fromLockingChain, bool ledgerBoundary);
+
     friend std::shared_ptr<Federator>
     make_Federator(
         App& app,
@@ -142,6 +154,7 @@ private:
         beast::IP::Endpoint const& sidechainIp,
         ripple::AccountID lockingChainRewardAccount,
         ripple::AccountID issuingChainRewardAccount,
+        bool witnessSubmit,
         beast::Journal j);
 };
 
@@ -156,6 +169,7 @@ make_Federator(
     beast::IP::Endpoint const& sidechainIp,
     ripple::AccountID lockingChainRewardAccount,
     ripple::AccountID issuingChainRewardAccount,
+    bool witnessSubmit,
     beast::Journal j);
 
 }  // namespace xbwd

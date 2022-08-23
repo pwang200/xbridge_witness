@@ -505,6 +505,21 @@ ChainListener::processMessage(Json::Value const& msg)
         return {};
     }();
 
+    auto const ledgerBoundary = [&]() -> bool {
+        if (msg.isMember(ripple::jss::account_history_ledger_boundary) &&
+            msg[ripple::jss::account_history_ledger_boundary].isBool() &&
+            msg[ripple::jss::account_history_ledger_boundary].asBool())
+        {
+            JLOGV(
+                j_.trace(),
+                "ledger boundary",
+                ripple::jv("seq", *lgrSeq),
+                ripple::jv("chain_name", chainName()));
+            return true;
+        }
+        return false;
+    }();
+
     switch (txnType)
     {
         case TxnType::xChainClaim: {
@@ -579,7 +594,8 @@ ChainListener::processMessage(Json::Value const& msg)
                 *lgrSeq,
                 *txnHash,
                 txnTER,
-                txnHistoryIndex};
+                txnHistoryIndex,
+                ledgerBoundary};
             pushEvent(std::move(e));
         }
         break;
@@ -694,7 +710,8 @@ ChainListener::processMessage(Json::Value const& msg)
                 *lgrSeq,
                 *txnHash,
                 txnTER,
-                txnHistoryIndex};
+                txnHistoryIndex,
+                ledgerBoundary};
             pushEvent(std::move(e));
         }
         break;

@@ -48,6 +48,7 @@ struct XChainCommitDetected
     ripple::uint256 txnHash_;
     ripple::TER status_;
     std::int32_t rpcOrder_;
+    bool ledgerBoundary_;
 
     Json::Value
     toJson() const;
@@ -69,6 +70,7 @@ struct XChainAccountCreateCommitDetected
     ripple::uint256 txnHash_;
     ripple::TER status_;
     std::int32_t rpcOrder_;
+    bool ledgerBoundary_;
 
     Json::Value
     toJson() const;

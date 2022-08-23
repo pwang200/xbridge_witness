@@ -45,9 +45,18 @@ Config::Config(Json::Value const& jv)
     , lockingChainRewardAccount{rpc::fromJson<ripple::AccountID>(
           jv,
           "LockingChainRewardAccount")}
-    , issuingChainRewardAccount{
-          rpc::fromJson<ripple::AccountID>(jv, "IssuingChainRewardAccount")}
+    , issuingChainRewardAccount{rpc::fromJson<ripple::AccountID>(
+          jv,
+          "IssuingChainRewardAccount")}
+    , witnessSubmit{false}
 {
+    if (jv.isMember("WitnessSubmit"))
+    {
+        if (jv["WitnessSubmit"].isBool())
+            witnessSubmit = jv["WitnessSubmit"].asBool();
+        else
+            throw std::runtime_error("WitnessSubmit config wrong format");
+    }
     if (jv.isMember("Admin"))
     {
         auto const& admin = jv["Admin"];
@@ -63,9 +72,7 @@ Config::Config(Json::Value const& jv)
                     admin["Username"].asString().empty() ||
                     admin["Password"].asString().empty())
                 {
-                    throw std::runtime_error(
-                        "Admin config wrong format:" +
-                        admin.asString());
+                    throw std::runtime_error("Admin config wrong format");
                 }
 
                 ac.pass.emplace(AdminConfig::PasswordAuth{

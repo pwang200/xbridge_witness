@@ -46,6 +46,7 @@ public:
     ripple::STXChainBridge bridge;
     ripple::AccountID lockingChainRewardAccount;
     ripple::AccountID issuingChainRewardAccount;
+    bool witnessSubmit;
     std::optional<AdminConfig> adminConf;
 
     explicit Config(Json::Value const& jv);
