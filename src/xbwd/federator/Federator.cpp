@@ -125,6 +125,73 @@ Federator::init(
     beast::IP::Endpoint const& sidechainIp,
     std::shared_ptr<ChainListener>&& sidechainListener)
 {
+    auto getLedgerAndTxns =
+        [&](std::string const& tblName,
+            std::vector<ripple::uint256>& txnHashes) -> int {
+        auto session = app_.getXChainTxnDB().checkoutDb();
+        std::string transID;
+        int ledgerSeq = 0;
+
+        auto sql = fmt::format(
+            R"sql(SELECT TransID, LedgerSeq FROM {table_name} WHERE LedgerSeq = (SELECT MAX(LedgerSeq) FROM {table_name});
+            )sql",
+            fmt::arg("table_name", tblName));
+
+        soci::indicator otherChainDstInd;
+        soci::statement st =
+            ((*session).prepare << sql,
+             soci::into(transID),
+             soci::into(ledgerSeq));
+        st.execute();
+        while (st.fetch())
+        {
+            ripple::uint256 t;
+            if (!t.parseHex(transID))
+            {
+                JLOG(j_.fatal())
+                    << "error reading database: cannot parse transation hash "
+                    << transID;
+                // TODO abort?
+            }
+            else
+            {
+                txnHashes.emplace_back(t);
+            }
+        }
+        assert(ledgerSeq >= 0);
+        return ledgerSeq;
+    };
+
+    auto getDBTxns = [&](ChainType ct, std::vector<ripple::uint256>& txns) {
+        std::vector<ripple::uint256> temp;
+        auto commitLedgerSqn = getLedgerAndTxns(
+            db_init::xChainTableName(
+                ct == ChainType::locking ? ChainDir::issuingToLocking
+                                         : ChainDir::lockingToIssuing),
+            txns);
+        auto createAccountLedgerSqn = getLedgerAndTxns(
+            db_init::xChainCreateAccountTableName(
+                ct == ChainType::locking ? ChainDir::issuingToLocking
+                                         : ChainDir::lockingToIssuing),
+            temp);
+
+        if (commitLedgerSqn < createAccountLedgerSqn)
+            txns.swap(temp);
+        else if (commitLedgerSqn == createAccountLedgerSqn)
+            txns.insert(txns.end(), temp.begin(), temp.end());
+    };
+
+    getDBTxns(ChainType::locking, initSyncDBTxnHashes_[ChainType::locking]);
+    getDBTxns(ChainType::issuing, initSyncDBTxnHashes_[ChainType::issuing]);
+
+    for (auto ct : {ChainType::locking, ChainType::issuing})
+    {
+        JLOG(j_.trace()) << "Federator init, " << to_string(ct) << " getDBTxns "
+                         << initSyncDBTxnHashes_[ct].size();
+        for (auto const& t : initSyncDBTxnHashes_[ct])
+            JLOG(j_.trace()) << t;
+    }
+
     chains_[ChainType::locking].listener_ = std::move(mainchainListener);
     chains_[ChainType::locking].listener_->init(ios, mainchainIp);
     chains_[ChainType::issuing].listener_ = std::move(sidechainListener);
@@ -192,20 +259,82 @@ Federator::push(FederatorEvent&& e)
 }
 
 void
+Federator::initSync(
+    ChainType const ct,
+    ripple::uint256 const& eHash,
+    std::int32_t rpcOrder,
+    FederatorEvent const& e)
+{
+    if (std::count(
+            initSyncDBTxnHashes_[ct].begin(),
+            initSyncDBTxnHashes_[ct].end(),
+            eHash) > 0)
+    {
+        initSyncDone(ct);
+    }
+    else
+    {
+        bool historical = rpcOrder < 0;
+        // assert order of insertion, so that the replay later will be in order
+        {
+            static ChainArray<std::int32_t> rpcOrderNew{-1, -1};
+            static ChainArray<std::int32_t> rpcOrderOld{0, 0};
+            JLOG(j_.trace()) << "initSync " << to_string(ct)
+                             << ", rpcOrderNew=" << rpcOrderNew[ct]
+                             << " rpcOrderOld=" << rpcOrderOld[ct]
+                             << " rpcOrder=" << rpcOrder;
+            if (historical)
+            {
+                assert(rpcOrderOld[ct] > rpcOrder);
+                rpcOrderOld[ct] = rpcOrder;
+            }
+            else
+            {
+                assert(rpcOrderNew[ct] < rpcOrder);
+                rpcOrderNew[ct] = rpcOrder;
+            }
+        }
+
+        if (historical)
+            replays_[ct].emplace_front(e);
+        else
+            replays_[ct].emplace_back(e);
+    }
+}
+
+void
+Federator::initSyncDone(const ChainType ct)
+{
+    JLOG(j_.debug()) << "initSyncDone " << to_string(ct) << ", "
+                     << replays_[ct].size() << " events to replay";
+    initSync_[ct] = false;
+    chains_[otherChain(ct)].listener_->stopHistoricalTxns();
+    for (auto const& event : replays_[ct])
+        std::visit([this](auto&& e) { this->onEvent(e); }, event);
+    replays_[ct].clear();
+    initSyncDBTxnHashes_[ct].clear();
+}
+
+void
 Federator::onEvent(event::XChainCommitDetected const& e)
 {
-    JLOGV(
-        j_.trace(),
-        "onEvent XChainTransferDetected",
-        ripple::jv("event", e.toJson()));
-
-    auto const& tblName = db_init::xChainTableName(e.dir_);
     ChainType const dstChain = e.dir_ == ChainDir::lockingToIssuing
         ? ChainType::issuing
         : ChainType::locking;
+    JLOGV(
+        j_.trace(),
+        "onEvent XChainTransferDetected",
+        ripple::jv("chain", to_string(dstChain)),
+        ripple::jv("event", e.toJson()));
 
+    if (initSync_[dstChain])
+    {
+        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        return;
+    }
+
+    auto const& tblName = db_init::xChainTableName(e.dir_);
     auto const txnIdHex = ripple::strHex(e.txnHash_.begin(), e.txnHash_.end());
-
     {
         auto session = app_.getXChainTxnDB().checkoutDb();
         auto sql = fmt::format(
@@ -340,18 +469,24 @@ Federator::onEvent(event::XChainCommitDetected const& e)
 void
 Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
 {
-    JLOGV(
-        j_.error(),
-        "onEvent XChainAccountCreateDetected",
-        ripple::jv("event", e.toJson()));
-
-    auto const& tblName = db_init::xChainCreateAccountTableName(e.dir_);
     ChainType const dstChain = e.dir_ == ChainDir::lockingToIssuing
         ? ChainType::issuing
         : ChainType::locking;
 
-    auto const txnIdHex = ripple::strHex(e.txnHash_.begin(), e.txnHash_.end());
+    JLOGV(
+        j_.error(),
+        "onEvent XChainAccountCreateDetected",
+        ripple::jv("chain", to_string(dstChain)),
+        ripple::jv("event", e.toJson()));
 
+    if (initSync_[dstChain])
+    {
+        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        return;
+    }
+
+    auto const& tblName = db_init::xChainCreateAccountTableName(e.dir_);
+    auto const txnIdHex = ripple::strHex(e.txnHash_.begin(), e.txnHash_.end());
     {
         auto session = app_.getXChainTxnDB().checkoutDb();
         auto sql = fmt::format(
@@ -503,18 +638,25 @@ Federator::onEvent(event::HeartbeatTimer const& e)
     JLOG(j_.trace()) << "HeartbeatTimer";
 }
 
-static std::unordered_set<ripple::TERUnderlyingType> SkippableTec({
-    ripple::tesSUCCESS,
-    ripple::tecXCHAIN_NO_CLAIM_ID,
-    ripple::tecXCHAIN_SENDING_ACCOUNT_MISMATCH,
-    ripple::tecXCHAIN_ACCOUNT_CREATE_PAST,
-    ripple::tecXCHAIN_WRONG_CHAIN,
-    ripple::tecXCHAIN_PROOF_UNKNOWN_KEY,
-    ripple::tecXCHAIN_NO_SIGNERS_LIST,
-    ripple::tecBAD_XCHAIN_TRANSFER_ISSUE,
-    ripple::tecINSUFFICIENT_RESERVE,
-    ripple::tecNO_DST_INSUF_XRP
-});
+void
+Federator::onEvent(event::EndOfHistory const& e)
+{
+    JLOG(j_.trace()) << "EndOfHistory " << to_string(e.chainType_);
+    if (initSync_[e.chainType_])
+        initSyncDone(e.chainType_);
+}
+
+static std::unordered_set<ripple::TERUnderlyingType> SkippableTxnResult(
+    {ripple::tesSUCCESS,
+     ripple::tecXCHAIN_NO_CLAIM_ID,
+     ripple::tecXCHAIN_SENDING_ACCOUNT_MISMATCH,
+     ripple::tecXCHAIN_ACCOUNT_CREATE_PAST,
+     ripple::tecXCHAIN_WRONG_CHAIN,
+     ripple::tecXCHAIN_PROOF_UNKNOWN_KEY,
+     ripple::tecXCHAIN_NO_SIGNERS_LIST,
+     ripple::tecBAD_XCHAIN_TRANSFER_ISSUE,
+     ripple::tecINSUFFICIENT_RESERVE,
+     ripple::tecNO_DST_INSUF_XRP});
 
 void
 Federator::onEvent(event::XChainAttestsResult const& e)
@@ -525,7 +667,8 @@ Federator::onEvent(event::XChainAttestsResult const& e)
         ripple::jv("chain", to_string(e.chainType_)),
         ripple::jv("accountSqn", e.accountSqn_),
         ripple::jv("result", transHuman(e.ter_)));
-    if (SkippableTec.find(TERtoInt(e.ter_)) != SkippableTec.end())
+
+    if (SkippableTxnResult.find(TERtoInt(e.ter_)) != SkippableTxnResult.end())
     {
         std::lock_guard l{txnsMutex_};
         auto& subs = submitted_[e.chainType_];
@@ -539,6 +682,7 @@ Federator::onEvent(event::XChainAttestsResult const& e)
         }
     }
     // else, will resubmit after txn ttl (i.e. TxnTTLLedgers = 4) ledgers
+    // may also get here during init sync, and it is fine.
 }
 
 void
@@ -553,6 +697,7 @@ Federator::onEvent(event::NewLedger const& e)
     ledgerIndexes_[e.chainType_].store(e.ledgerIndex_);
     ledgerFees_[e.chainType_].store(e.fee_);
 
+    bool notify = false;
     {
         std::lock_guard l{txnsMutex_};
         auto& subs = submitted_[e.chainType_];
@@ -563,6 +708,7 @@ Federator::onEvent(event::NewLedger const& e)
             });
         while (subs.begin() != notInclude)
         {
+            assert(!initSync_[e.chainType_]);
             auto& front = subs.front();
             if (front.retriesAllowed_ > 0)
             {
@@ -582,12 +728,20 @@ Federator::onEvent(event::NewLedger const& e)
             }
             submitted_[e.chainType_].pop_front();
         }
+        notify = !errored_[e.chainType_].empty();
     }
-    if (!errored_[ChainType::locking].empty() ||
-        !errored_[ChainType::issuing].empty())
+    if (notify)
     {
         std::lock_guard l(cvMutexes_[lt_txnSubmit]);
         cvs_[lt_txnSubmit].notify_one();
+    }
+    else
+    {
+        std::lock_guard bl{batchMutex_};
+        if (curClaimAtts_[e.chainType_].size() +
+                curCreateAtts_[e.chainType_].size() >
+            0)
+            pushAttOnSubmitTxn(bridge_, e.chainType_);
     }
 }
 
@@ -616,8 +770,8 @@ Federator::pushAttOnSubmitTxn(
     }
     if (notify)
     {
-        std::lock_guard l(cvMutexes_[lt_event]);
-        cvs_[lt_event].notify_one();
+        std::lock_guard l(cvMutexes_[lt_txnSubmit]);
+        cvs_[lt_txnSubmit].notify_one();
     }
 }
 
@@ -810,6 +964,9 @@ Federator::txnSubmitLoop()
         loopCvs_[lt].wait(l, [this, lt] { return !loopLocked_[lt]; });
     }
 
+    ChainArray<bool> waitingAccountInfo{false, false};
+    ChainArray<std::uint32_t> accountInfoSqns{0u, 0u};
+    std::mutex accountInfoMutex;
     // return if ready to submit txn
     auto getReady = [&](ChainType chain) -> bool {
         if (ledgerIndexes_[chain] == 0 || ledgerFees_[chain] == 0)
@@ -825,31 +982,45 @@ Federator::txnSubmitLoop()
         if (accountSqns_[chain] != 0)
             return true;
 
-        std::promise<Json::Value> promise;
-        std::future<Json::Value> future = promise.get_future();
-        auto callback = [&promise](Json::Value const& v) {
-            promise.set_value(v);
+        {
+            std::lock_guard aiLock{accountInfoMutex};
+            if (waitingAccountInfo[chain])
+                return false;
+
+            if (accountInfoSqns[chain] != 0)
+            {
+                accountSqns_[chain] = accountInfoSqns[chain];
+                accountInfoSqns[chain] = 0;
+                return true;
+            }
+            waitingAccountInfo[chain] = true;
+        }
+
+        auto callback = [&, ct = chain](Json::Value const& accountInfo) {
+            JLOGV(
+                j_.trace(),
+                "txn submit account info",
+                ripple::jv("accountInfo", accountInfo));
+            if (accountInfo.isMember(ripple::jss::result) &&
+                accountInfo[ripple::jss::result].isMember("account_data"))
+            {
+                auto const ad =
+                    accountInfo[ripple::jss::result]["account_data"];
+                if (ad.isMember(ripple::jss::Sequence) &&
+                    ad[ripple::jss::Sequence].isIntegral())
+                {
+                    std::lock_guard aiLock{accountInfoMutex};
+                    assert(waitingAccountInfo[ct] && accountInfoSqns[ct] == 0);
+                    accountInfoSqns[ct] = ad[ripple::jss::Sequence].asUInt();
+                    waitingAccountInfo[ct] = false;
+                }
+            }
         };
         Json::Value request;
         request[ripple::jss::account] = accountStrs[chain];
         request[ripple::jss::ledger_index] = "validated";
         chains_[chain].listener_->send("account_info", request, callback);
-        Json::Value const accountInfo = future.get();
-        JLOGV(
-            j_.trace(),
-            "txn submit account info",
-            ripple::jv("accountInfo", accountInfo));
-        if (accountInfo.isMember(ripple::jss::result) &&
-            accountInfo[ripple::jss::result].isMember("account_data"))
-        {
-            auto const ad = accountInfo[ripple::jss::result]["account_data"];
-            if (ad.isMember(ripple::jss::Sequence) && ad[ripple::jss::Sequence].isIntegral())
-            {
-                accountSqns_[chain] = ad[ripple::jss::Sequence].asUInt();
-                return true;
-            }
-        }
-
+        JLOG(j_.trace()) << "Not ready, waiting account sqn";
         return false;
     };
 
@@ -921,11 +1092,122 @@ Json::Value
 Federator::getInfo() const
 {
     // TODO
-    // Get the events size
-    // Get the transactions size
     // Track transactons per secons
     // Track when last transaction or event was submitted
     Json::Value ret{Json::objectValue};
+    {
+        // Pending events
+        // In most cases, events have been moved by event loop thread
+        std::lock_guard l{eventsMutex_};
+        ret["pending_events_size"] = (int)events_.size();
+        if (events_.size() > 0)
+        {
+            Json::Value pendingEvents{Json::arrayValue};
+            for (auto const& event : events_)
+            {
+                std::visit(
+                    [&](auto const& e) { pendingEvents.append(e.toJson()); },
+                    event);
+            }
+            ret["pending_events"] = pendingEvents;
+        }
+    }
+
+    for (ChainType ct : {ChainType::locking, ChainType::issuing})
+    {
+        Json::Value side{Json::objectValue};
+        side["initiating"] = initSync_[ct] ? "True" : "False";
+        side["ledger_index"] = ledgerIndexes_[ct].load();
+        side["fee"] = ledgerFees_[ct].load();
+
+        int commitCount = 0;
+        int createCount = 0;
+        Json::Value commitAttests{Json::arrayValue};
+        Json::Value createAttests{Json::arrayValue};
+        auto getAttests = [&](auto const& submissions) {
+            commitCount = 0;
+            createCount = 0;
+            commitAttests.clear();
+            createAttests.clear();
+            for (auto const& a : submissions)
+            {
+                auto temp =
+                    ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
+                        a.batch_.claims().begin(),
+                        a.batch_.claims().end(),
+                        [&](auto batchStart, auto batchEnd) -> int {
+                            for (auto i = batchStart; i != batchEnd; ++i)
+                            {
+                                commitAttests.append((int)i->claimID);
+                                ++commitCount;
+                            }
+                            return 0;
+                        });
+
+                temp = ripple::STXChainAttestationBatch::for_each_create_batch<
+                    int>(
+                    a.batch_.creates().begin(),
+                    a.batch_.creates().end(),
+                    [&](auto batchStart, auto batchEnd) -> int {
+                        for (auto i = batchStart; i != batchEnd; ++i)
+                        {
+                            createAttests.append((int)i->createCount);
+                            ++createCount;
+                        }
+                        return 0;
+                    });
+            }
+        };
+
+        {
+            std::lock_guard l{txnsMutex_};
+            getAttests(submitted_[ct]);
+            Json::Value submitted{Json::objectValue};
+            submitted["commit_attests_size"] = commitCount;
+            if (commitCount)
+                submitted["commit_attests"] = commitAttests;
+            submitted["create_account_attests_size"] = createCount;
+            if (createCount)
+                submitted["create_account_attests"] = createAttests;
+            side["submitted"] = submitted;
+
+            getAttests(errored_[ct]);
+            Json::Value errored{Json::objectValue};
+            errored["commit_attests_size"] = commitCount;
+            if (commitCount > 0)
+                errored["commit_attests"] = commitAttests;
+            errored["create_account_attests_size"] = createCount;
+            if (createCount > 0)
+                errored["create_account_attests"] = createAttests;
+            side["errored"] = errored;
+
+            getAttests(txns_[ct]);
+        }
+        {
+            std::lock_guard l{batchMutex_};
+            for (auto const& a : curClaimAtts_[ct])
+            {
+                commitAttests.append((int)a.claimID);
+                ++commitCount;
+            }
+            for (auto const& a : curCreateAtts_[ct])
+            {
+                createAttests.append((int)a.createCount);
+                ++createCount;
+            }
+        }
+        Json::Value pending{Json::objectValue};
+        pending["commit_attests_size"] = commitCount;
+        if (commitCount > 0)
+            pending["commit_attests"] = commitAttests;
+        pending["create_account_attests_size"] = createCount;
+        if (createCount > 0)
+            pending["create_account_attests"] = createAttests;
+        side["pending"] = pending;
+
+        ret[to_string(ct)] = side;
+    }
+
     return ret;
 }
 

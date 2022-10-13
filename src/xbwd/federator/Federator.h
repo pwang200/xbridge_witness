@@ -36,9 +36,11 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <list>
 #include <memory>
 #include <optional>
+//#include <stack>
 #include <thread>
 #include <vector>
 
@@ -127,10 +129,13 @@ class Federator : public std::enable_shared_from_this<Federator>
         GUARDED_BY(batchMutex_) curClaimAtts_;
     ChainArray<std::vector<ripple::AttestationBatch::AttestationCreateAccount>>
         GUARDED_BY(batchMutex_) curCreateAtts_;
-    ChainArray<std::atomic<uint32_t>> ledgerIndexes_{0u, 0u};
-    ChainArray<std::atomic<uint32_t>> ledgerFees_{0u, 0u};
-    ChainArray<uint32_t> accountSqns_{0u, 0u};  // submission thread only
+    ChainArray<std::atomic<std::uint32_t>> ledgerIndexes_{0u, 0u};
+    ChainArray<std::atomic<std::uint32_t>> ledgerFees_{0u, 0u};
+    ChainArray<std::uint32_t> accountSqns_{0u, 0u};
 
+    ChainArray<std::atomic<bool>> initSync_{true, true};
+    ChainArray<std::vector<ripple::uint256>> initSyncDBTxnHashes_;
+    ChainArray<std::deque<FederatorEvent>> replays_;
     beast::Journal j_;
 
 public:
@@ -199,6 +204,19 @@ private:
 
     void
     onEvent(event::XChainAttestsResult const& e);
+
+    void
+    onEvent(event::EndOfHistory const& e);
+
+    void
+    initSync(
+        ChainType ct,
+        ripple::uint256 const& eHash,
+        std::int32_t rpcOrder,
+        FederatorEvent const& e);
+
+    void
+    initSyncDone(ChainType const ct);
 
     void
     pushAtt(

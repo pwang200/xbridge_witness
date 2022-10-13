@@ -280,6 +280,15 @@ ChainListener::processMessage(Json::Value const& msg)
     else if (tryPushNewLedgerEvent(msg))
         return;
 
+    if (msg.isMember(ripple::jss::account_history_tx_first) &&
+        msg[ripple::jss::account_history_tx_first].asBool())
+    {
+        using namespace event;
+        EndOfHistory e{isMainchain_ ? ChainType::issuing : ChainType::locking};
+        pushEvent(std::move(e));
+        return;
+    }
+
     if (!msg.isMember(ripple::jss::validated) ||
         !msg[ripple::jss::validated].asBool())
     {

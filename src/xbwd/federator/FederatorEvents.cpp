@@ -118,6 +118,15 @@ NewLedger::toJson() const
     return result;
 }
 
+Json::Value
+EndOfHistory::toJson() const
+{
+    Json::Value result{Json::objectValue};
+    result["eventType"] = "EndOfHistory";
+    result["chainType"] = to_string(chainType_);
+    return result;
+}
+
 }  // namespace event
 
 Json::Value
