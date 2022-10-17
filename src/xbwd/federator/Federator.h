@@ -212,7 +212,7 @@ private:
     initSync(
         ChainType ct,
         ripple::uint256 const& eHash,
-        bool historical,
+        std::int32_t rpcOrder,
         FederatorEvent const& e);
 
     void

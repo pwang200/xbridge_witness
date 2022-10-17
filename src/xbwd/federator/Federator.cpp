@@ -262,7 +262,7 @@ void
 Federator::initSync(
     ChainType const ct,
     ripple::uint256 const& eHash,
-    bool historical,
+    std::int32_t rpcOrder,
     FederatorEvent const& e)
 {
     if (std::count(
@@ -274,6 +274,23 @@ Federator::initSync(
     }
     else
     {
+        bool historical = rpcOrder < 0;
+        // assert order of insertion, so that the replay later will be in order
+        {
+            static std::int32_t rpcOrderNew = -1;
+            static std::int32_t rpcOrderOld = 0;
+            if (historical)
+            {
+                assert(rpcOrderOld > rpcOrder);
+                rpcOrderOld = rpcOrder;
+            }
+            else
+            {
+                assert(rpcOrderNew < rpcOrder);
+                rpcOrderNew = rpcOrder;
+            }
+        }
+
         if (historical)
             replays_[ct].emplace_front(e);
         else
@@ -284,16 +301,14 @@ Federator::initSync(
 void
 Federator::initSyncDone(const ChainType ct)
 {
-    JLOG(j_.debug()) << "initSyncDone " << to_string(ct);
+    JLOG(j_.debug()) << "initSyncDone " << to_string(ct) << ",  "
+                     << replays_[ct].size() << " events to replay";
     initSync_[ct] = false;
     chains_[ct].listener_->stopHistoricalTxns();
     for (auto const& event : replays_[ct])
         std::visit([this](auto&& e) { this->onEvent(e); }, event);
     replays_[ct].clear();
-    if (!initSyncDBTxnHashes_[ct].empty())
-    {
-        initSyncDBTxnHashes_[ct].clear();
-    }
+    initSyncDBTxnHashes_[ct].clear();
 }
 
 void
@@ -310,7 +325,7 @@ Federator::onEvent(event::XChainCommitDetected const& e)
 
     if (initSync_[dstChain])
     {
-        initSync(dstChain, e.txnHash_, e.rpcOrder_ < 0, e);
+        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
         return;
     }
 
@@ -462,7 +477,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
 
     if (initSync_[dstChain])
     {
-        initSync(dstChain, e.txnHash_, e.rpcOrder_ < 0, e);
+        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
         return;
     }
 
@@ -627,7 +642,7 @@ Federator::onEvent(event::EndOfHistory const& e)
         initSyncDone(e.chainType_);
 }
 
-static std::unordered_set<ripple::TERUnderlyingType> SkippableTec(
+static std::unordered_set<ripple::TERUnderlyingType> SkippableTxnResult(
     {ripple::tesSUCCESS,
      ripple::tecXCHAIN_NO_CLAIM_ID,
      ripple::tecXCHAIN_SENDING_ACCOUNT_MISMATCH,
@@ -649,7 +664,7 @@ Federator::onEvent(event::XChainAttestsResult const& e)
         ripple::jv("accountSqn", e.accountSqn_),
         ripple::jv("result", transHuman(e.ter_)));
 
-    if (SkippableTec.find(TERtoInt(e.ter_)) != SkippableTec.end())
+    if (SkippableTxnResult.find(TERtoInt(e.ter_)) != SkippableTxnResult.end())
     {
         std::lock_guard l{txnsMutex_};
         auto& subs = submitted_[e.chainType_];
@@ -883,7 +898,6 @@ Federator::mainLoop()
         loopCvs_[lt].wait(l, [this] { return !loopLocked_[lt]; });
     }
 
-    ChainArray<bool> syncing{true, true};
     std::vector<FederatorEvent> localEvents;
     localEvents.reserve(16);
     while (!requestStop_)
@@ -1067,120 +1081,3 @@ Submission::Submission(
 }
 
 }  // namespace xbwd
-
-//    auto getLedgerAndTxns = [&](std::string const& tblName, std::vector
-//    <ripple::uint256> & txnHashes) -> int
-//    {
-//        auto session = app.getXChainTxnDB().checkoutDb();
-//        std::string transID;
-//        int ledgerSeq = 0;
-//
-//        auto sql = fmt::format(
-//                R"sql(SELECT TransID, LedgerSeq FROM {table_name} WHERE
-//                LedgerSeq = (SELECT MAX(LedgerSeq) FROM {table_name});
-//            )sql",
-//                fmt::arg("table_name", tblName));
-//
-//        soci::indicator otherChainDstInd;
-//        soci::statement st =
-//                ((*session).prepare << sql,
-//                        soci::into(transID),
-//                        soci::into(ledgerSeq));
-//        st.execute();
-//        while (st.fetch())
-//        {
-//            txnHashes.emplace_back(transID);
-//        }
-//        assert(ledgerSeq >= 0);
-//        return ledgerSeq;
-//    };
-//
-//    auto getTxns = [&](ChainType ct) -> std::vector <ripple::uint256>
-//    {
-//        std::vector<ripple::uint256> commitTxnHashes;
-//        std::vector <ripple::uint256> createAccountTxnHashes;
-//        auto commitLedgerSqn = getLedgerAndTxns(db_init::xChainTableName(ct ==
-//        ChainType::locking ? ChainDir::lockingToIssuing :
-//        ChainDir::issuingToLocking), commitTxnHashes); auto
-//        createAccountLedgerSqn =
-//        getLedgerAndTxns(db_init::xChainCreateAccountTableName(ct ==
-//        ChainType::locking ? ChainDir::lockingToIssuing :
-//        ChainDir::issuingToLocking), createAccountTxnHashes);
-//
-//        if(commitLedgerSqn > createAccountLedgerSqn)
-//            return commitTxnHashes;
-//        else if (commitLedgerSqn < createAccountLedgerSqn)
-//            return createAccountTxnHashes;
-//        else
-//        {
-//            commitTxnHashes.insert(commitTxnHashes.end(),
-//            createAccountTxnHashes.begin(), createAccountTxnHashes.end());
-//            return commitTxnHashes;
-//        }
-//    };
-
-//    ChainArray<std::uint32_t> commitLedgerSqns;
-//    ChainArray<std::vector <ripple::uint256>> commitTxnHashes;
-//    ChainArray<std::uint32_t> createAccountLedgerSqns;
-//    ChainArray<std::vector <ripple::uint256>> createAccountTxnHashes;
-//
-//    commitLedgerSqns[ChainType::locking] =
-//    getLedgerAndTxns(db_init::xChainTableName(ChainDir::lockingToIssuing),
-//    commitTxnHashes[ChainType::locking]); commitLedgerSqns[ChainType::issuing]
-//    = getLedgerAndTxns(db_init::xChainTableName(ChainDir::issuingToLocking),
-//    commitTxnHashes[ChainType::issuing]);
-//    createAccountLedgerSqns[ChainType::locking] =
-//    getLedgerAndTxns(db_init::xChainCreateAccountTableName(ChainDir::lockingToIssuing),
-//    createAccountTxnHashes[ChainType::locking]);
-//    createAccountLedgerSqns[ChainType::issuing] =
-//    getLedgerAndTxns(db_init::xChainCreateAccountTableName(ChainDir::issuingToLocking),
-//    createAccountTxnHashes[ChainType::issuing]);
-
-//    auto getLastAttestSqn = [&](ChainType chainType)
-//    {
-//        auto const &tblName = db_init::xChainTableName(
-//                chainType == ChainType::locking ? ChainDir::lockingToIssuing :
-//                ChainDir::issuingToLocking);
-//
-//        auto session = app.getXChainTxnDB().checkoutDb();
-//
-//        std::string transID;
-//        int ledgerSeq;
-//
-//        auto sql = fmt::format(
-//                R"sql(SELECT TransID, LedgerSeq FROM {table_name} WHERE
-//                LedgerSeq = (SELECT MAX(LedgerSeq) FROM {table_name});
-//            )sql",
-//                fmt::arg("table_name", tblName));
-//
-//        soci::indicator otherChainDstInd;
-//        soci::statement st =
-//                ((*session).prepare << sql,
-//                        soci::into(transID),
-//                        soci::into(ledgerSeq));
-//        st.execute();
-//
-//        std::vector <ripple::AttestationBatch::AttestationClaim> claims;
-//        ripple::STXChainBridge bridge;
-//        std::optional <ripple::STXChainBridge> firstBridge;
-//        std::vector <ripple::uint256> txnHashes;
-//        while (st.fetch())
-//        {
-//            txnHashes.emplace_back(transID);
-//
-//        }
-//    }
-//
-//    void
-//    processEvent(event::XChainCommitDetected const& e);
-//
-//    void
-//    processEvent(event::XChainAccountCreateCommitDetected const& e);
-//    struct InitSyncData{
-//        bool syncing_ = true;
-//        std::vector<ripple::uint256> DBTxnHashes_;
-//    };
-//    ChainArray<InitSyncData> initSync_;
-//    ChainArray<std::stack<event::XChainCommitDetected>> commitReplays_;
-//    ChainArray<std::stack<event::XChainAccountCreateCommitDetected>>
-//    accountCreateReplays_;
