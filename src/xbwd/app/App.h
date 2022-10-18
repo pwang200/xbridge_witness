@@ -49,7 +49,6 @@ public:
 class App : public BasicApp
 {
     ripple::Logs logs_;
-    beast::Journal j_;
 
     // Database for cross chain transactions
     DatabaseCon xChainTxnDB_;
@@ -65,6 +64,8 @@ class App : public BasicApp
     std::unique_ptr<config::Config> config_;
 
 public:
+    beast::Journal j_;
+
     explicit App(
         std::unique_ptr<config::Config> config,
         beast::severities::Severity logLevel);

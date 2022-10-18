@@ -308,6 +308,8 @@ doWitness(App& app, Json::Value const& in, Json::Value& result)
         }
         else
         {
+            JLOG(app.j_.debug()) << "No such transaction " << claimID << ", "
+                                 << to_string(chainDir);
             result["error"] = "No such transaction";
         }
     }
