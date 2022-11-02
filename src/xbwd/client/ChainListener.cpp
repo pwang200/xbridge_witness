@@ -340,7 +340,8 @@ ChainListener::processMessage(Json::Value const& msg)
 
     bool const txnSuccess = ripple::isTesSuccess(txnTER);
 
-    if (fieldMatchesStr(msg, ripple::jss::type, ripple::jss::transaction))
+    if (fieldMatchesStr(msg, ripple::jss::type, ripple::jss::transaction) &&
+        !msg.isMember(ripple::jss::account_history_tx_index))
     {
         auto const txn = msg[ripple::jss::transaction];
         if (fieldMatchesStr(

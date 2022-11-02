@@ -474,7 +474,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
         : ChainType::locking;
 
     JLOGV(
-        j_.error(),
+        j_.trace(),
         "onEvent XChainAccountCreateDetected",
         ripple::jv("chain", to_string(dstChain)),
         ripple::jv("event", e.toJson()));
@@ -678,6 +678,13 @@ Federator::onEvent(event::XChainAttestsResult const& e)
                 [&](auto const& i) { return i.accountSqn_ == e.accountSqn_; });
             i != subs.end())
         {
+            JLOGV(j_.trace(),
+                  "XChainAttestsResult TOREMOVE ",
+                  ripple::jv("chain", to_string(e.chainType_)),
+                  ripple::jv("accountSqn", e.accountSqn_),
+                  ripple::jv("accountSqn", e.accountSqn_),
+                  ripple::jv("result", e.ter_),
+                  ripple::jv("removing batch", i->batch_));
             subs.erase(i);
         }
     }
@@ -724,6 +731,12 @@ Federator::onEvent(event::NewLedger const& e)
                     "Giving up after repeated retries ",
                     ripple::jv(
                         "batch",
+                        front.batch_.getJson(ripple::JsonOptions::none)));
+                JLOGV(
+                    j_.trace(),
+                    "Giving up after repeated retries TOREMOVE",
+                    ripple::jv(
+                            "batch",
                         front.batch_.getJson(ripple::JsonOptions::none)));
             }
             submitted_[e.chainType_].pop_front();
@@ -819,6 +832,11 @@ Federator::submitTxn(Submission const& submission, ChainType dstChain)
         "Submitting transaction",
         ripple::jv(
             "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
+    JLOGV(
+        j_.trace(),
+        "Submitting transaction TOREMOVE",
+        ripple::jv(
+            "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
 
     if (submission.batch_.numAttestations() == 0)
         return;
@@ -877,6 +895,11 @@ Federator::submitTxn(Submission const& submission, ChainType dstChain)
                                     << "Tem txn submit result, removing "
                                        "submission with account sequence "
                                     << sqn;
+                                JLOGV(
+                                        j_.trace(),
+                                        "Tem txn submit result, removing TOREMOVE",
+                                        ripple::jv(
+                                                "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
                                 subs.erase(i);
                             }
                         }
@@ -1013,6 +1036,7 @@ Federator::txnSubmitLoop()
                     assert(waitingAccountInfo[ct] && accountInfoSqns[ct] == 0);
                     accountInfoSqns[ct] = ad[ripple::jss::Sequence].asUInt();
                     waitingAccountInfo[ct] = false;
+                    JLOG(j_.trace()) << "got account sqn " << accountInfoSqns[ct];
                 }
             }
         };
