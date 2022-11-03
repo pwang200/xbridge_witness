@@ -137,7 +137,6 @@ Federator::init(
             )sql",
             fmt::arg("table_name", tblName));
 
-        soci::indicator otherChainDstInd;
         soci::statement st =
             ((*session).prepare << sql,
              soci::into(transID),
@@ -196,6 +195,172 @@ Federator::init(
     chains_[ChainType::locking].listener_->init(ios, mainchainIp);
     chains_[ChainType::issuing].listener_ = std::move(sidechainListener);
     chains_[ChainType::issuing].listener_->init(ios, sidechainIp);
+}
+
+void Federator::sendDBAttests(ChainType ct)
+{
+    auto chainDir = ct == ChainType::locking ? ChainDir::issuingToLocking
+                                         : ChainDir::lockingToIssuing;
+    {
+        auto tblName = db_init::xChainTableName(chainDir);
+        auto session = app_.getXChainTxnDB().checkoutDb();
+        soci::blob amtBlob(*session);
+        soci::blob bridgeBlob(*session);
+        soci::blob sendingAccountBlob(*session);
+        soci::blob rewardAccountBlob(*session);
+        soci::blob otherChainDstBlob(*session);
+        soci::blob publicKeyBlob(*session);
+        soci::blob signatureBlob(*session);
+
+        std::string transID;
+        int ledgerSeq;
+        int claimID;
+        int success;
+
+        auto sql = fmt::format(
+                R"sql(SELECT TransID, LedgerSeq, ClaimID, Success, DeliveredAmt,
+                     Bridge, SendingAccount, RewardAccount, OtherChainDst,
+                     PublicKey, Signature FROM {table_name};
+        )sql",
+                fmt::arg("table_name", tblName));
+
+        soci::indicator otherChainDstInd;
+        soci::statement st =
+                ((*session).prepare << sql,
+                        soci::into(transID),
+                        soci::into(ledgerSeq),
+                        soci::into(claimID),
+                        soci::into(success),
+                        soci::into(amtBlob),
+                        soci::into(bridgeBlob),
+                        soci::into(sendingAccountBlob),
+                        soci::into(rewardAccountBlob),
+                        soci::into(otherChainDstBlob, otherChainDstInd),
+                        soci::into(publicKeyBlob),
+                        soci::into(signatureBlob));
+        st.execute();
+
+        std::vector<ripple::AttestationBatch::AttestationClaim> claims;
+        ripple::STXChainBridge bridge;
+        std::optional<ripple::STXChainBridge> firstBridge;
+        while (st.fetch())
+        {
+            ripple::PublicKey signingPK;
+            convert(publicKeyBlob, signingPK);
+
+            ripple::Buffer sigBuf;
+            convert(signatureBlob, sigBuf);
+
+            ripple::STAmount sendingAmount;
+            convert(amtBlob, sendingAmount, ripple::sfAmount);
+
+            ripple::AccountID sendingAccount;
+            convert(sendingAccountBlob, sendingAccount);
+
+            ripple::AccountID rewardAccount;
+            convert(rewardAccountBlob, rewardAccount);
+
+            std::optional<ripple::AccountID> optDst;
+            if (otherChainDstInd == soci::i_ok)
+            {
+                optDst.emplace();
+                convert(otherChainDstBlob, *optDst);
+            }
+
+            convert(bridgeBlob, bridge, ripple::sfXChainBridge);
+
+            pushAtt(bridge, ripple::AttestationBatch::AttestationClaim{
+                    signingPK,
+                    sigBuf,
+                    sendingAccount,
+                    sendingAmount,
+                    rewardAccount,
+                    chainDir == ChainDir::lockingToIssuing,
+                    (std::uint64_t) claimID,
+                    optDst}, ct, true);
+        }
+    }
+    {
+        auto tblName = db_init::xChainCreateAccountTableName(chainDir);
+        auto session = app_.getXChainTxnDB().checkoutDb();
+        soci::blob amtBlob(*session);
+        soci::blob rewardAmtBlob(*session);
+        soci::blob bridgeBlob(*session);
+        soci::blob sendingAccountBlob(*session);
+        soci::blob rewardAccountBlob(*session);
+        soci::blob otherChainDstBlob(*session);
+        soci::blob publicKeyBlob(*session);
+        soci::blob signatureBlob(*session);
+
+        std::string transID;
+        int ledgerSeq;
+        int createCount;
+        int success;
+
+        auto sql = fmt::format(
+                R"sql(SELECT TransID, LedgerSeq, ClaimID, Success, DeliveredAmt, RewardAmt,
+                     Bridge, SendingAccount, RewardAccount, OtherChainDst,
+                     PublicKey, Signature FROM {table_name};
+        )sql",
+                fmt::arg("table_name", tblName));
+
+        soci::indicator otherChainDstInd;
+        soci::statement st =
+                ((*session).prepare << sql,
+                        soci::into(transID),
+                        soci::into(ledgerSeq),
+                        soci::into(createCount),
+                        soci::into(success),
+                        soci::into(amtBlob),
+                        soci::into(rewardAmtBlob),
+                        soci::into(bridgeBlob),
+                        soci::into(sendingAccountBlob),
+                        soci::into(rewardAccountBlob),
+                        soci::into(otherChainDstBlob, otherChainDstInd),
+                        soci::into(publicKeyBlob),
+                        soci::into(signatureBlob));
+        st.execute();
+
+        std::vector<ripple::AttestationBatch::AttestationClaim> claims;
+        ripple::STXChainBridge bridge;
+        std::optional<ripple::STXChainBridge> firstBridge;
+        while (st.fetch())
+        {
+            ripple::PublicKey signingPK;
+            convert(publicKeyBlob, signingPK);
+
+            ripple::Buffer sigBuf;
+            convert(signatureBlob, sigBuf);
+
+            ripple::STAmount sendingAmount;
+            convert(amtBlob, sendingAmount, ripple::sfAmount);
+
+            ripple::STAmount rewardAmount;
+            convert(rewardAmtBlob, rewardAmount, ripple::sfAmount);
+
+            ripple::AccountID sendingAccount;
+            convert(sendingAccountBlob, sendingAccount);
+
+            ripple::AccountID rewardAccount;
+            convert(rewardAccountBlob, rewardAccount);
+
+            ripple::AccountID dstAccount;
+            convert(otherChainDstBlob, dstAccount);
+
+            convert(bridgeBlob, bridge, ripple::sfXChainBridge);
+
+            pushAtt(bridge, ripple::AttestationBatch::AttestationCreateAccount{
+                    signingPK,
+                    sigBuf,
+                    sendingAccount,
+                    sendingAmount,
+                    rewardAmount,
+                    rewardAccount,
+                    chainDir == ChainDir::lockingToIssuing,
+                    (std::uint64_t) createCount,
+                    dstAccount}, ct, true);
+        }
+    }
 }
 
 Federator::~Federator()
@@ -310,6 +475,7 @@ Federator::initSyncDone(const ChainType ct)
                      << replays_[ct].size() << " events to replay";
     initSync_[ct] = false;
     chains_[otherChain(ct)].listener_->stopHistoricalTxns();
+    sendDBAttests(ct);
     for (auto const& event : replays_[ct])
     {
         JLOG(j_.trace()) << "REPLAYREPLAY " << to_string(ct)
@@ -667,7 +833,7 @@ void
 Federator::onEvent(event::XChainAttestsResult const& e)
 {
     JLOGV(
-        j_.trace(),
+        j_.debug(),
         "XChainAttestsResult",
         ripple::jv("chain", to_string(e.chainType_)),
         ripple::jv("accountSqn", e.accountSqn_),
@@ -684,8 +850,8 @@ Federator::onEvent(event::XChainAttestsResult const& e)
             i != subs.end())
         {
             auto const &a = *i;
-            std::string commitAttests;
-            std::string createAttests;
+            std::stringstream commitAttests;
+            std::stringstream createAttests;
             auto temp =
                     ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
                             a.batch_.claims().begin(),
@@ -694,7 +860,8 @@ Federator::onEvent(event::XChainAttestsResult const& e)
                             {
                                 for (auto i = batchStart; i != batchEnd; ++i)
                                 {
-                                    commitAttests += ":" + std::to_string(i->claimID);
+                                    commitAttests << i->claimID;
+                                    deleteFromDB(e.chainType_, i->claimID, false);
                                 }
                                 return 0;
                             });
@@ -706,7 +873,8 @@ Federator::onEvent(event::XChainAttestsResult const& e)
                     {
                         for (auto i = batchStart; i != batchEnd; ++i)
                         {
-                            createAttests += ":" + std::to_string(i->createCount);
+                            createAttests << i->createCount;
+                            deleteFromDB(e.chainType_, i->createCount, true);
                         }
                         return 0;
                     });
@@ -717,9 +885,10 @@ Federator::onEvent(event::XChainAttestsResult const& e)
                   ripple::jv("accountSqn", e.accountSqn_),
                   ripple::jv("result", e.ter_),
                   ripple::jv(
-                          "commitAttests", commitAttests),
+                          "commitAttests", commitAttests.str()),
                   ripple::jv(
-                          "createAttests", createAttests));
+                          "createAttests", createAttests.str()));
+
             subs.erase(i);
         }
     }
@@ -1366,6 +1535,39 @@ Federator::getInfo() const
 
     return ret;
 }
+
+void
+Federator::deleteFromDB(ChainType ct,
+                        std::uint64_t id, bool isCreateAccount)
+{
+    auto session = app_.getXChainTxnDB().checkoutDb();
+    auto tblName = [&](){
+        if(isCreateAccount)
+            return db_init::xChainTableName(
+                ct == ChainType::locking ? ChainDir::issuingToLocking
+                                         : ChainDir::lockingToIssuing);
+        else
+            return db_init::xChainCreateAccountTableName(
+                ct == ChainType::locking ? ChainDir::issuingToLocking
+                                         : ChainDir::lockingToIssuing);
+    }();
+
+    auto sql = [&]()
+    {
+        if(isCreateAccount)
+            return fmt::format(
+                R"sql(DELETE FROM {table_name} WHERE CreateCount = {create_count});
+                )sql",
+                fmt::arg("table_name", tblName), fmt::arg("create_count", id));
+        else
+            return fmt::format(
+                R"sql(DELETE FROM {table_name} WHERE ClaimID = {claim_id});
+                )sql",
+                fmt::arg("table_name", tblName), fmt::arg("claim_id", id));
+    }();
+
+    *session << sql;
+};
 
 Submission::Submission(
     uint32_t lastLedgerSeq,

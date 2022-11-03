@@ -242,6 +242,12 @@ private:
     void
     submitTxn(Submission const& submission, ChainType dstChain);
 
+    void
+    deleteFromDB(ChainType ct, std::uint64_t claimID, bool isCreateAccount); //TODO add bridge
+
+    void
+    sendDBAttests(ChainType ct);
+
     friend std::shared_ptr<Federator>
     make_Federator(
         App& app,
