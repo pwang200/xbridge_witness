@@ -294,7 +294,8 @@ Federator::initSync(
                 rpcOrderNew[ct] = rpcOrder;
             }
         }
-
+        JLOG(j_.trace()) << "REPLAYREPLAY " << to_string(ct)
+                         << " add rpcOrder=" << rpcOrder << " " << toJson(e);
         if (historical)
             replays_[ct].emplace_front(e);
         else
@@ -310,7 +311,11 @@ Federator::initSyncDone(const ChainType ct)
     initSync_[ct] = false;
     chains_[otherChain(ct)].listener_->stopHistoricalTxns();
     for (auto const& event : replays_[ct])
+    {
+        JLOG(j_.trace()) << "REPLAYREPLAY " << to_string(ct)
+                         << " replay " << toJson(event);
         std::visit([this](auto&& e) { this->onEvent(e); }, event);
+    }
     replays_[ct].clear();
     initSyncDBTxnHashes_[ct].clear();
 }
@@ -678,13 +683,43 @@ Federator::onEvent(event::XChainAttestsResult const& e)
                 [&](auto const& i) { return i.accountSqn_ == e.accountSqn_; });
             i != subs.end())
         {
+            auto const &a = *i;
+            std::string commitAttests;
+            std::string createAttests;
+            auto temp =
+                    ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
+                            a.batch_.claims().begin(),
+                            a.batch_.claims().end(),
+                            [&](auto batchStart, auto batchEnd) -> int
+                            {
+                                for (auto i = batchStart; i != batchEnd; ++i)
+                                {
+                                    commitAttests += ":" + std::to_string(i->claimID);
+                                }
+                                return 0;
+                            });
+            temp = ripple::STXChainAttestationBatch::for_each_create_batch<
+                    int>(
+                    a.batch_.creates().begin(),
+                    a.batch_.creates().end(),
+                    [&](auto batchStart, auto batchEnd) -> int
+                    {
+                        for (auto i = batchStart; i != batchEnd; ++i)
+                        {
+                            createAttests += ":" + std::to_string(i->createCount);
+                        }
+                        return 0;
+                    });
+
             JLOGV(j_.trace(),
                   "XChainAttestsResult TOREMOVE ",
                   ripple::jv("chain", to_string(e.chainType_)),
                   ripple::jv("accountSqn", e.accountSqn_),
-                  ripple::jv("accountSqn", e.accountSqn_),
                   ripple::jv("result", e.ter_),
-                  ripple::jv("removing batch", i->batch_));
+                  ripple::jv(
+                          "commitAttests", commitAttests),
+                  ripple::jv(
+                          "createAttests", createAttests));
             subs.erase(i);
         }
     }
@@ -727,17 +762,47 @@ Federator::onEvent(event::NewLedger const& e)
             else
             {
                 JLOGV(
-                    j_.warn(),
-                    "Giving up after repeated retries ",
-                    ripple::jv(
-                        "batch",
-                        front.batch_.getJson(ripple::JsonOptions::none)));
+                        j_.warn(),
+                        "Giving up after repeated retries ",
+                        ripple::jv(
+                                "batch",
+                                front.batch_.getJson(ripple::JsonOptions::none)));
+
+                auto const &a = front;
+                std::string commitAttests;
+                std::string createAttests;
+                auto temp =
+                        ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
+                                a.batch_.claims().begin(),
+                                a.batch_.claims().end(),
+                                [&](auto batchStart, auto batchEnd) -> int
+                                {
+                                    for (auto i = batchStart; i != batchEnd; ++i)
+                                    {
+                                        commitAttests += ":" + std::to_string(i->claimID);
+                                    }
+                                    return 0;
+                                });
+                temp = ripple::STXChainAttestationBatch::for_each_create_batch<
+                        int>(
+                        a.batch_.creates().begin(),
+                        a.batch_.creates().end(),
+                        [&](auto batchStart, auto batchEnd) -> int
+                        {
+                            for (auto i = batchStart; i != batchEnd; ++i)
+                            {
+                                createAttests += ":" + std::to_string(i->createCount);
+                            }
+                            return 0;
+                        });
+
                 JLOGV(
-                    j_.trace(),
-                    "Giving up after repeated retries TOREMOVE",
-                    ripple::jv(
-                            "batch",
-                        front.batch_.getJson(ripple::JsonOptions::none)));
+                        j_.trace(),
+                        "Giving up after repeated retries TOREMOVE",
+                        ripple::jv(
+                                "commitAttests", commitAttests),
+                        ripple::jv(
+                                "createAttests", createAttests));
             }
             submitted_[e.chainType_].pop_front();
         }
@@ -828,30 +893,66 @@ void
 Federator::submitTxn(Submission const& submission, ChainType dstChain)
 {
     JLOGV(
-        j_.trace(),
-        "Submitting transaction",
-        ripple::jv(
-            "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
-    JLOGV(
-        j_.trace(),
-        "Submitting transaction TOREMOVE",
-        ripple::jv(
-            "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
+            j_.trace(),
+            "Submitting transaction",
+            ripple::jv(
+                    "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
+    {
+        auto const &a = submission;
+        std::string commitAttests;
+        std::string createAttests;
+        auto temp =
+                ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
+                        a.batch_.claims().begin(),
+                        a.batch_.claims().end(),
+                        [&](auto batchStart, auto batchEnd) -> int
+                        {
+                            for (auto i = batchStart; i != batchEnd; ++i)
+                            {
+                                commitAttests += ":" + std::to_string(i->claimID);
+                            }
+                            return 0;
+                        });
+
+        temp = ripple::STXChainAttestationBatch::for_each_create_batch<
+                int>(
+                a.batch_.creates().begin(),
+                a.batch_.creates().end(),
+                [&](auto batchStart, auto batchEnd) -> int
+                {
+                    for (auto i = batchStart; i != batchEnd; ++i)
+                    {
+                        createAttests += ":" + std::to_string(i->createCount);
+                    }
+                    return 0;
+                });
+
+        JLOGV(
+                j_.trace(),
+                "Submitting transaction TOREMOVE",
+                ripple::jv("chain", to_string(dstChain)),
+                ripple::jv(
+                        "commitAttests", commitAttests),
+                ripple::jv(
+                        "createAttests", createAttests)
+
+        );
+    }
 
     if (submission.batch_.numAttestations() == 0)
         return;
 
     // already verified txnSubmit before call submitTxn()
-    config::TxnSubmit const& txnSubmit = *chains_[dstChain].txnSubmit_;
+    config::TxnSubmit const &txnSubmit = *chains_[dstChain].txnSubmit_;
     ripple::XRPAmount fee{ledgerFees_[dstChain].load() + FeeExtraDrops};
     ripple::STTx const toSubmit = txn::getSignedTxn(
-        txnSubmit.submittingAccount,
-        submission.batch_,
-        submission.accountSqn_,
-        submission.lastLedgerSeq_,
-        fee,
-        txnSubmit.keypair,
-        j_);
+            txnSubmit.submittingAccount,
+            submission.batch_,
+            submission.accountSqn_,
+            submission.lastLedgerSeq_,
+            fee,
+            txnSubmit.keypair,
+            j_);
 
     Json::Value const request = [&] {
         Json::Value r;
@@ -895,11 +996,42 @@ Federator::submitTxn(Submission const& submission, ChainType dstChain)
                                     << "Tem txn submit result, removing "
                                        "submission with account sequence "
                                     << sqn;
+
+                                auto const &a = submission;
+                                std::string commitAttests;
+                                std::string createAttests;
+                                auto temp =
+                                        ripple::STXChainAttestationBatch::for_each_claim_batch<int>(
+                                                a.batch_.claims().begin(),
+                                                a.batch_.claims().end(),
+                                                [&](auto batchStart, auto batchEnd) -> int
+                                                {
+                                                    for (auto i = batchStart; i != batchEnd; ++i)
+                                                    {
+                                                        commitAttests += ":" + std::to_string(i->claimID);
+                                                    }
+                                                    return 0;
+                                                });
+                                temp = ripple::STXChainAttestationBatch::for_each_create_batch<
+                                        int>(
+                                        a.batch_.creates().begin(),
+                                        a.batch_.creates().end(),
+                                        [&](auto batchStart, auto batchEnd) -> int
+                                        {
+                                            for (auto i = batchStart; i != batchEnd; ++i)
+                                            {
+                                                createAttests += ":" + std::to_string(i->createCount);
+                                            }
+                                            return 0;
+                                        });
+
                                 JLOGV(
                                         j_.trace(),
                                         "Tem txn submit result, removing TOREMOVE",
                                         ripple::jv(
-                                                "batch", submission.batch_.getJson(ripple::JsonOptions::none)));
+                                                "commitAttests", commitAttests),
+                                        ripple::jv(
+                                                "createAttests", createAttests));
                                 subs.erase(i);
                             }
                         }
