@@ -134,7 +134,10 @@ class Federator : public std::enable_shared_from_this<Federator>
     ChainArray<std::uint32_t> accountSqns_{0u, 0u};
 
     ChainArray<std::atomic<bool>> initSync_{true, true};
-    ChainArray<std::vector<ripple::uint256>> initSyncDBTxnHashes_;
+    //ChainArray<std::vector<ripple::uint256>> initSyncDBTxnHashes_;
+    //ChainArray<std::string const> const kvTableTxHashNames_{"lockingLastTxHash","issuingLastTxHash"};
+    ChainArray<ripple::uint256> initSyncDBTxnHashes_;
+    ChainArray<std::uint32_t> initSyncDBLedgerSqns_{0u, 0u};
     ChainArray<std::deque<FederatorEvent>> replays_;
     beast::Journal j_;
 
