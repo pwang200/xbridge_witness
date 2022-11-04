@@ -129,9 +129,11 @@ Federator::init(
     {
         auto session = app_.getXChainTxnDB().checkoutDb();
         auto sql = fmt::format(
-                R"sql(SELECT ChainType, TransID, LedgerSeq FROM {table_name});
+                R"sql(SELECT ChainType, TransID, LedgerSeq FROM {table_name};
             )sql",
                 fmt::arg("table_name", db_init::xChainSyncTable));
+        JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
+
         std::uint32_t chainType = 0;
         std::string transID;
         std::uint32_t ledgerSeq = 0;
@@ -172,9 +174,10 @@ Federator::init(
         {
             auto session = app_.getXChainTxnDB().checkoutDb();
             auto sql = fmt::format(
-                    R"sql(DELETE * FROM {table_name});
+                    R"sql(DELETE FROM {table_name};
             )sql",
                     fmt::arg("table_name", db_init::xChainSyncTable));
+            JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
             *session << sql;
         }
         for (auto ct : {ChainType::locking, ChainType::issuing})
@@ -190,7 +193,7 @@ Federator::init(
                       (:ct, :txnId, :lgrSeq);
                 )sql",
                 fmt::arg("table_name", db_init::xChainSyncTable));
-
+            JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
             *session << sql, soci::use((std::uint32_t)ct), soci::use(txnIdHex), soci::use(initSyncDBLedgerSqns_[ct]);
         }
     };
@@ -200,7 +203,7 @@ Federator::init(
 
     for (auto ct : {ChainType::locking, ChainType::issuing})
     {
-        JLOG(j_.trace()) << "Federator init, " << to_string(ct)
+        JLOG(j_.trace()) << "Federator init, syncDB " << to_string(ct)
                          << " ledgerSqn " << initSyncDBLedgerSqns_[ct]
                          << " txHash " << initSyncDBTxnHashes_[ct];
     }
@@ -234,9 +237,10 @@ void Federator::sendDBAttests(ChainType ct)
         auto sql = fmt::format(
                 R"sql(SELECT TransID, LedgerSeq, ClaimID, Success, DeliveredAmt,
                      Bridge, SendingAccount, RewardAccount, OtherChainDst,
-                     PublicKey, Signature FROM {table_name};
+                     PublicKey, Signature FROM {table_name} ORDER BY ClaimID;
         )sql",
                 fmt::arg("table_name", tblName));
+            JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
 
         soci::indicator otherChainDstInd;
         soci::statement st =
@@ -312,11 +316,12 @@ void Federator::sendDBAttests(ChainType ct)
         int success;
 
         auto sql = fmt::format(
-                R"sql(SELECT TransID, LedgerSeq, ClaimID, Success, DeliveredAmt, RewardAmt,
+                R"sql(SELECT TransID, LedgerSeq, CreateCount, Success, DeliveredAmt, RewardAmt,
                      Bridge, SendingAccount, RewardAccount, OtherChainDst,
-                     PublicKey, Signature FROM {table_name};
+                     PublicKey, Signature FROM {table_name} ORDER BY CreateCount;
         )sql",
                 fmt::arg("table_name", tblName));
+            JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
 
         soci::indicator otherChainDstInd;
         soci::statement st =
@@ -444,13 +449,18 @@ Federator::initSync(
     std::int32_t rpcOrder,
     FederatorEvent const& e)
 {
-    if (initSyncDBTxnHashes_[ct] == eHash)
-    {
-        initSyncDone(ct);
+    if(!initSyncHistoryDone_[ct]){
+        if(initSyncDBTxnHashes_[ct] == eHash)
+        {
+            initSyncHistoryDone_[ct] = true;
+            initSyncRpcOrder_[ct] = rpcOrder;
+        }
     }
-    else
+
+    bool historical = rpcOrder < 0;
+    bool skip = historical && initSyncHistoryDone_[ct];
+    if(!skip)
     {
-        bool historical = rpcOrder < 0;
         // assert order of insertion, so that the replay later will be in order
         {
             static ChainArray<std::int32_t> rpcOrderNew{-1, -1};
@@ -477,11 +487,16 @@ Federator::initSync(
         else
             replays_[ct].emplace_back(e);
     }
+
+    tryInitSyncDone(ct);
 }
 
 void
-Federator::initSyncDone(const ChainType ct)
+Federator::tryInitSyncDone(const ChainType ct)
 {
+    if(!initSyncHistoryDone_[ct]||!initSyncOldTxExpired_[ct])
+        return;
+
     JLOG(j_.debug()) << "initSyncDone " << to_string(ct) << ", "
                      << replays_[ct].size() << " events to replay";
     initSync_[ct] = false;
@@ -491,7 +506,7 @@ Federator::initSyncDone(const ChainType ct)
     {
         JLOG(j_.trace()) << "REPLAYREPLAY " << to_string(ct)
                          << " replay " << toJson(event);
-        std::visit([this](auto&& e) { this->onEvent(e); }, event);
+        std::visit([this](auto const& e) { this->onEvent(e); }, event);
     }
     replays_[ct].clear();
 }
@@ -511,6 +526,11 @@ Federator::onEvent(event::XChainCommitDetected const& e)
     if (initSync_[dstChain])
     {
         initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        return;
+    }
+    else if(e.rpcOrder_ < initSyncRpcOrder_[dstChain])
+    {
+        //don't need older ones
         return;
     }
 
@@ -644,12 +664,19 @@ Federator::onEvent(event::XChainCommitDetected const& e)
         //TODO merge up
         auto session = app_.getXChainTxnDB().checkoutDb();
         auto sql = fmt::format(
-            R"sql(UPDATE {table_name} SET TransID = {tx_hash} WHERE ChainType = {chain_type});
+            R"sql(UPDATE {table_name} SET TransID = :tx_hash WHERE ChainType = {chain_type};
             )sql",
             fmt::arg("table_name", db_init::xChainSyncTable),
-            fmt::arg("tx_hash", txnIdHex),
+            //fmt::arg("tx_hash", txnIdHex),
             fmt::arg("chain_type", dstChain == ChainType::locking? "0":"1"));//TODO
-        *session << sql;
+        JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
+
+        *session << sql, soci::use(txnIdHex);
+
+        JLOGV(j_.trace(),
+        "syncDB update txHash XChainTransferDetected",
+        ripple::jv("chain", to_string(dstChain)),
+        ripple::jv("txHash", e.txnHash_));
     }
 
     if (claimOpt)
@@ -674,6 +701,11 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
     if (initSync_[dstChain])
     {
         initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        return;
+    }
+    else if(e.rpcOrder_ < initSyncRpcOrder_[dstChain])
+    {
+        //don't need older ones
         return;
     }
 
@@ -811,6 +843,32 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
             soci::use(otherChainDstBlob), soci::use(publicKeyBlob),
             soci::use(signatureBlob);
     }
+    {
+        //TODO merge up
+        auto session = app_.getXChainTxnDB().checkoutDb();
+        auto sql = fmt::format(
+                R"sql(UPDATE {table_name} SET TransID = :tx_hash WHERE ChainType = {chain_type};
+            )sql",
+                fmt::arg("table_name", db_init::xChainSyncTable),
+                //fmt::arg("tx_hash", txnIdHex),
+                fmt::arg("chain_type", dstChain == ChainType::locking? "0":"1"));//TODO
+//                            JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
+//        auto sql = fmt::format(
+//            R"sql(UPDATE {table_name} SET TransID = :tx_hash WHERE ChainType = {chain_type};
+//            )sql",
+//            fmt::arg("table_name", db_init::xChainSyncTable),
+//            //fmt::arg("tx_hash", txnIdHex),
+//            fmt::arg("chain_type", dstChain == ChainType::locking? "0":"1"));//TODO
+        JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
+
+        *session << sql, soci::use(txnIdHex);
+  //      *session << sql;
+
+        JLOGV(j_.trace(),
+              "syncDB update txHash XChainAccountCreateDetected",
+              ripple::jv("chain", to_string(dstChain)),
+              ripple::jv("txHash", e.txnHash_));
+    }
     if (createOpt)
     {
         pushAtt(e.bridge_, std::move(*createOpt), dstChain, e.ledgerBoundary_);
@@ -835,7 +893,10 @@ Federator::onEvent(event::EndOfHistory const& e)
 {
     JLOG(j_.trace()) << "EndOfHistory " << to_string(e.chainType_);
     if (initSync_[e.chainType_])
-        initSyncDone(e.chainType_);
+    {
+        initSyncHistoryDone_[e.chainType_] = true;
+        tryInitSyncDone(e.chainType_);
+    }
 }
 
 static std::unordered_set<ripple::TERUnderlyingType> SkippableTxnResult(
@@ -928,6 +989,13 @@ Federator::onEvent(event::NewLedger const& e)
         ripple::jv("fee", e.fee_));
     ledgerIndexes_[e.chainType_].store(e.ledgerIndex_);
     ledgerFees_[e.chainType_].store(e.fee_);
+
+    if(initSync_[e.chainType_])
+    {
+        initSyncOldTxExpired_[e.chainType_] = e.ledgerIndex_ > initSyncDBLedgerSqns_[e.chainType_];
+        tryInitSyncDone(e.chainType_);
+        return;
+    }
 
     bool notify = false;
     {
@@ -1432,13 +1500,18 @@ Federator::txnSubmitLoop()
                 //TODO move out of submit loop
                 auto session = app_.getXChainTxnDB().checkoutDb();
                 auto sql = fmt::format(
-                            R"sql(UPDATE {table_name} SET LedgerSeq = {ledger_sqn} WHERE ChainType = {chain_type});
+                            R"sql(UPDATE {table_name} SET LedgerSeq = {ledger_sqn} WHERE ChainType = {chain_type};
             )sql",
                             fmt::arg("table_name", db_init::xChainSyncTable),
                             fmt::arg("ledger_sqn", txn.lastLedgerSeq_),
                             fmt::arg("chain_type", submitChain == ChainType::locking? "0":"1"));//TODO
-                    *session << sql;
+                JLOG(j_.trace()) << "syncDB_SQL " <<  sql;
 
+                    *session << sql;
+                JLOGV(j_.trace(),
+              "syncDB update ledgerSqn txnSubmitLoop",
+              ripple::jv("chain", to_string(submitChain)),
+              ripple::jv("ledgerSqn", txn.lastLedgerSeq_));
             }
             submitTxn(txn, submitChain);
         }
@@ -1576,30 +1649,48 @@ Federator::deleteFromDB(ChainType ct,
     auto session = app_.getXChainTxnDB().checkoutDb();
     auto tblName = [&](){
         if(isCreateAccount)
-            return db_init::xChainTableName(
-                ct == ChainType::locking ? ChainDir::issuingToLocking
-                                         : ChainDir::lockingToIssuing);
-        else
             return db_init::xChainCreateAccountTableName(
-                ct == ChainType::locking ? ChainDir::issuingToLocking
-                                         : ChainDir::lockingToIssuing);
+                    ct == ChainType::locking ? ChainDir::issuingToLocking
+                                             : ChainDir::lockingToIssuing);
+        else
+            return db_init::xChainTableName(
+                    ct == ChainType::locking ? ChainDir::issuingToLocking
+                                             : ChainDir::lockingToIssuing);
     }();
 
     auto sql = [&]()
     {
+//        if(isCreateAccount)
+//            return fmt::format(
+//                R"sql(DELETE FROM {table_name} WHERE CreateCount = {create_count};
+//                )sql",
+//                fmt::arg("table_name", tblName), fmt::arg("create_count", id));
+//        else
+//            return fmt::format(
+//                R"sql(DELETE FROM {table_name} WHERE ClaimID = {claim_id};
+//                )sql",
+//                fmt::arg("table_name", tblName), fmt::arg("claim_id", id));
         if(isCreateAccount)
             return fmt::format(
-                R"sql(DELETE FROM {table_name} WHERE CreateCount = {create_count});
+                    R"sql(DELETE FROM {table_name} WHERE CreateCount = :cid;
                 )sql",
-                fmt::arg("table_name", tblName), fmt::arg("create_count", id));
+                    fmt::arg("table_name", tblName));
         else
             return fmt::format(
-                R"sql(DELETE FROM {table_name} WHERE ClaimID = {claim_id});
+                    R"sql(DELETE FROM {table_name} WHERE ClaimID = :cid;
                 )sql",
-                fmt::arg("table_name", tblName), fmt::arg("claim_id", id));
+                    fmt::arg("table_name", tblName));
     }();
+    JLOG(j_.trace()) << "syncDB_SQL " <<  sql << " tblName=" << tblName << " id="<<id;
+    *session << sql, soci::use(id);
 
-    *session << sql;
+    size_t count = 123456;
+    sql= fmt::format(
+                    R"sql(SELECT count(*) FROM {table_name};
+                )sql",
+                    fmt::arg("table_name", tblName));
+    *session << sql, soci::into(count);
+    JLOG(j_.trace()) << "syncDB_SQL " <<  sql << " tblName=" << tblName << " count="<<count;
 };
 
 Submission::Submission(
