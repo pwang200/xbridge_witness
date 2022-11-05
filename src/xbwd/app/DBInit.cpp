@@ -119,8 +119,7 @@ xChainDBInit()
         }
 
         r.push_back(fmt::format(
-                syncTblFmtStr,
-                fmt::arg("table_name", xChainSyncTable)));
+            syncTblFmtStr, fmt::arg("table_name", xChainSyncTable)));
 
         r.push_back("END TRANSACTION;");
         return r;

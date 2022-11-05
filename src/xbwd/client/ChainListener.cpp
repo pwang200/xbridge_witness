@@ -89,10 +89,10 @@ ChainListener::onConnect()
         ripple::toBase58(
             isMainchain_ ? bridge_.lockingChainDoor()
                          : bridge_.issuingChainDoor());
+    params[ripple::jss::streams] = Json::arrayValue;
+    params[ripple::jss::streams].append("ledger");
     if (!witnessAccountStr_.empty())
     {
-        params[ripple::jss::streams] = Json::arrayValue;
-        params[ripple::jss::streams].append("ledger");
         params[ripple::jss::accounts] = Json::arrayValue;
         params[ripple::jss::accounts].append(witnessAccountStr_);
     }

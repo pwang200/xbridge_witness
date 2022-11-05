@@ -134,13 +134,13 @@ class Federator : public std::enable_shared_from_this<Federator>
     ChainArray<std::uint32_t> accountSqns_{0u, 0u};
 
     ChainArray<std::atomic<bool>> initSync_{true, true};
-    //ChainArray<std::vector<ripple::uint256>> initSyncDBTxnHashes_;
-    //ChainArray<std::string const> const kvTableTxHashNames_{"lockingLastTxHash","issuingLastTxHash"};
     ChainArray<ripple::uint256> initSyncDBTxnHashes_;
     ChainArray<std::uint32_t> initSyncDBLedgerSqns_{0u, 0u};
     ChainArray<bool> initSyncHistoryDone_{false, false};
     ChainArray<bool> initSyncOldTxExpired_{false, false};
-    ChainArray<std::int32_t> initSyncRpcOrder_{std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::min()};
+    ChainArray<std::int32_t> initSyncRpcOrder_{
+        std::numeric_limits<std::int32_t>::min(),
+        std::numeric_limits<std::int32_t>::min()};
 
     ChainArray<std::deque<FederatorEvent>> replays_;
     beast::Journal j_;
@@ -250,7 +250,10 @@ private:
     submitTxn(Submission const& submission, ChainType dstChain);
 
     void
-    deleteFromDB(ChainType ct, std::uint64_t claimID, bool isCreateAccount); //TODO add bridge
+    deleteFromDB(
+        ChainType ct,
+        std::uint64_t claimID,
+        bool isCreateAccount);  // TODO add bridge
 
     void
     sendDBAttests(ChainType ct);
