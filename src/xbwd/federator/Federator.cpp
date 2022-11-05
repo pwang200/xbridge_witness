@@ -115,6 +115,9 @@ Federator::Federator(
 {
     std::fill(loopLocked_.begin(), loopLocked_.end(), true);
     events_.reserve(16);
+    for (auto ct : {ChainType::locking, ChainType::issuing})
+        autoSubmit_[ct] =
+            chains_[ct].txnSubmit_ && chains_[ct].txnSubmit_->shouldSubmit;
 }
 
 void
@@ -515,7 +518,8 @@ Federator::tryInitSyncDone(const ChainType ct)
                      << replays_[ct].size() << " events to replay";
     initSync_[ct] = false;
     chains_[otherChain(ct)].listener_->stopHistoricalTxns();
-    sendDBAttests(ct);
+    if (autoSubmit_[ct])
+        sendDBAttests(ct);
     for (auto const& event : replays_[ct])
     {
         JLOG(j_.trace()) << "REPLAYREPLAY " << to_string(ct) << " replay "
@@ -695,7 +699,7 @@ Federator::onEvent(event::XChainCommitDetected const& e)
             ripple::jv("txHash", e.txnHash_));
     }
 
-    if (claimOpt)
+    if (autoSubmit_[dstChain] && claimOpt)
     {
         pushAtt(e.bridge_, std::move(*claimOpt), dstChain, e.ledgerBoundary_);
     }
@@ -879,7 +883,7 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
             ripple::jv("chain", to_string(dstChain)),
             ripple::jv("txHash", e.txnHash_));
     }
-    if (createOpt)
+    if (autoSubmit_[dstChain] && createOpt)
     {
         pushAtt(e.bridge_, std::move(*createOpt), dstChain, e.ledgerBoundary_);
     }
@@ -930,6 +934,9 @@ Federator::onEvent(event::XChainAttestsResult const& e)
         ripple::jv("chain", to_string(e.chainType_)),
         ripple::jv("accountSqn", e.accountSqn_),
         ripple::jv("result", transHuman(e.ter_)));
+
+    if (!autoSubmit_[e.chainType_])
+        return;
 
     if (SkippableTxnResult.find(TERtoInt(e.ter_)) != SkippableTxnResult.end())
     {
@@ -1003,6 +1010,9 @@ Federator::onEvent(event::NewLedger const& e)
         tryInitSyncDone(e.chainType_);
         return;
     }
+
+    if (!autoSubmit_[e.chainType_])
+        return;
 
     bool notify = false;
     {
@@ -1375,7 +1385,6 @@ Federator::txnSubmitLoop()
     {
         return;
     }
-    // TODO move above check to init
 
     auto const lt = lt_txnSubmit;
     {

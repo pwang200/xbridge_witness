@@ -92,6 +92,7 @@ class Federator : public std::enable_shared_from_this<Federator>
     };
 
     ChainArray<Chain> chains_;
+    ChainArray<bool> autoSubmit_;  // event thread only
 
     mutable std::mutex eventsMutex_;
     std::vector<FederatorEvent> GUARDED_BY(eventsMutex_) events_;
@@ -131,7 +132,7 @@ class Federator : public std::enable_shared_from_this<Federator>
         GUARDED_BY(batchMutex_) curCreateAtts_;
     ChainArray<std::atomic<std::uint32_t>> ledgerIndexes_{0u, 0u};
     ChainArray<std::atomic<std::uint32_t>> ledgerFees_{0u, 0u};
-    ChainArray<std::uint32_t> accountSqns_{0u, 0u};
+    ChainArray<std::uint32_t> accountSqns_{0u, 0u};  // tx submit thread only
 
     ChainArray<std::atomic<bool>> initSync_{true, true};
     ChainArray<ripple::uint256> initSyncDBTxnHashes_;
