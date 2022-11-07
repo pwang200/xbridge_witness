@@ -224,7 +224,7 @@ private:
         FederatorEvent const& e);
 
     void
-    tryInitSyncDone(ChainType const ct);
+    tryFinishInitSync(ChainType const ct);
 
     void
     pushAtt(
