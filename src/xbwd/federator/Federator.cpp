@@ -96,7 +96,9 @@ make_Federator(
 }
 
 Federator::Chain::Chain(config::ChainConfig const& config)
-    : rewardAccount_{config.rewardAccount}, txnSubmit_(config.txnSubmit)
+    : rewardAccount_{config.rewardAccount}
+    , txnSubmit_(config.txnSubmit)
+    , lastAttestedCommitTx_(config.lastAttestedCommitTx)
 {
 }
 
@@ -148,8 +150,8 @@ Federator::init(
         st.execute();
         while (st.fetch())
         {
-            if (chainType != (std::uint32_t)ChainType::issuing &&
-                chainType != (std::uint32_t)ChainType::locking)
+            if (chainType != static_cast<std::uint32_t>(ChainType::issuing) &&
+                chainType != static_cast<std::uint32_t>(ChainType::locking))
             {
                 JLOG(j_.fatal())
                     << "error reading database: unknown chain type "
@@ -467,7 +469,9 @@ Federator::initSync(
 {
     if (!initSyncHistoryDone_[ct])
     {
-        if (initSyncDBTxnHashes_[ct] == eHash)
+        if (initSyncDBTxnHashes_[ct] == eHash ||
+            (chains_[ct].lastAttestedCommitTx_ &&
+             *chains_[ct].lastAttestedCommitTx_ == eHash))
         {
             initSyncHistoryDone_[ct] = true;
             initSyncRpcOrder_[ct] = rpcOrder;

@@ -54,6 +54,7 @@ struct ChainConfig
     beast::IP::Endpoint chainIp;
     ripple::AccountID rewardAccount;
     std::optional<TxnSubmit> txnSubmit;
+    std::optional<ripple::uint256> lastAttestedCommitTx;
     explicit ChainConfig(Json::Value const& jv);
 };
 

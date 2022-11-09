@@ -87,7 +87,7 @@ class Federator : public std::enable_shared_from_this<Federator>
         std::shared_ptr<ChainListener> listener_;
         ripple::AccountID rewardAccount_;
         std::optional<config::TxnSubmit> txnSubmit_;
-
+        std::optional<ripple::uint256> lastAttestedCommitTx_;
         explicit Chain(config::ChainConfig const& config);
     };
 
