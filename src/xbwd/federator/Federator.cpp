@@ -557,10 +557,13 @@ Federator::onEvent(event::XChainCommitDetected const& e)
 
     if (initSync_[dstChain])
     {
-        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        if (!e.rpcOrder_)
+            return;
+        initSync(dstChain, e.txnHash_, *e.rpcOrder_, e);
         return;
     }
-    else if (e.rpcOrder_ < initSyncRpcOrder_[dstChain])
+
+    if (e.rpcOrder_ && *e.rpcOrder_ < initSyncRpcOrder_[dstChain])
     {
         // don't need older ones
         return;
@@ -704,7 +707,8 @@ Federator::onEvent(event::XChainCommitDetected const& e)
 
     if (autoSubmit_[dstChain] && claimOpt)
     {
-        pushAtt(e.bridge_, std::move(*claimOpt), dstChain, e.ledgerBoundary_);
+        bool processNow = e.ledgerBoundary_ || !e.rpcOrder_;
+        pushAtt(e.bridge_, std::move(*claimOpt), dstChain, processNow);
     }
 }
 
@@ -723,10 +727,13 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
 
     if (initSync_[dstChain])
     {
-        initSync(dstChain, e.txnHash_, e.rpcOrder_, e);
+        if (!e.rpcOrder_)
+            return;
+        initSync(dstChain, e.txnHash_, *e.rpcOrder_, e);
         return;
     }
-    else if (e.rpcOrder_ < initSyncRpcOrder_[dstChain])
+
+    if (e.rpcOrder_ && *e.rpcOrder_ < initSyncRpcOrder_[dstChain])
     {
         // don't need older ones
         return;
@@ -877,7 +884,8 @@ Federator::onEvent(event::XChainAccountCreateCommitDetected const& e)
     }
     if (autoSubmit_[dstChain] && createOpt)
     {
-        pushAtt(e.bridge_, std::move(*createOpt), dstChain, e.ledgerBoundary_);
+        bool processNow = e.ledgerBoundary_ || !e.rpcOrder_;
+        pushAtt(e.bridge_, std::move(*createOpt), dstChain, processNow);
     }
 }
 
@@ -1473,7 +1481,7 @@ Federator::txnSubmitLoop()
                     R"sql(UPDATE {table_name} SET LedgerSeq = :ledger_sqn WHERE ChainType = :chain_type;
             )sql",
                     fmt::arg("table_name", db_init::xChainSyncTable));
-                JLOG(j_.trace()) << "syncDB_SQL " << sql;
+
                 auto chainType = static_cast<std::uint32_t>(submitChain);
                 *session << sql, soci::use(txn.lastLedgerSeq_),
                     soci::use(chainType);
@@ -1632,6 +1640,172 @@ Federator::deleteFromDB(ChainType ct, std::uint64_t id, bool isCreateAccount)
     }();
     *session << sql, soci::use(id);
 };
+
+void
+Federator::pullTx(
+    ripple::STXChainBridge const& bridge,
+    ChainType ct,
+    ripple::uint256 const& txHash,
+    Json::Value& result)
+{
+    // TODO bridge
+    if (initSync_[otherChain(ct)])
+    {
+        result["error"] = "syncing";
+        return;
+    }
+
+    auto callback = [this, srcChain = ct](Json::Value const& v) {
+        if (!v.isMember(ripple::jss::result))
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing result field";
+            return;
+        }
+
+        auto const& msg = v[ripple::jss::result];
+        if (!msg.isMember(ripple::jss::meta))
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing meta field";
+            return;
+        }
+        auto const& meta = msg[ripple::jss::meta];
+        if (!(meta.isMember("TransactionResult") &&
+              meta["TransactionResult"].isString() &&
+              meta["TransactionResult"].asString() == "tesSUCCESS"))
+        {
+            JLOG(j_.trace())
+                << "pullTx callback, missing or bad TransactionResult";
+            return;
+        }
+
+        auto txnTypeOpt = rpcResultParse::parseXChainTxnType(msg);
+        if (!txnTypeOpt)
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing or bad tx type";
+            return;
+        }
+        auto const txnHash = rpcResultParse::parseTxHash(msg);
+        if (!txnHash)
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing or bad tx hash";
+            return;
+        }
+        auto const txnBridge = rpcResultParse::parseBridge(msg);
+        if (!txnBridge)  // TODO check bridge match
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing or bad bridge";
+
+            return;
+        }
+
+        auto const txnSeq = rpcResultParse::parseTxSeq(msg);
+        if (!txnSeq)
+        {
+            JLOG(j_.trace()) << "pullTx callback, missing or bad tx sequence";
+            return;
+        }
+        auto const lgrSeq = rpcResultParse::parseLedgerSeq(msg);
+        if (!lgrSeq)
+        {
+            JLOG(j_.trace())
+                << "pullTx callback, missing or bad ledger sequence";
+
+            return;
+        }
+
+        auto const src = rpcResultParse::parseSrcAccount(msg);
+        if (!src)
+        {
+            JLOG(j_.trace())
+                << "pullTx callback, missing or bad source account";
+            return;
+        }
+
+        auto const dst = rpcResultParse::parseDstAccount(msg, *txnTypeOpt);
+
+        std::optional<ripple::STAmount> deliveredAmt =
+            rpcResultParse::parseDeliveredAmt(msg, meta);
+
+        auto const oppositeChainDir = srcChain == ChainType::locking
+            ? ChainDir::lockingToIssuing
+            : ChainDir::issuingToLocking;
+
+        switch (*txnTypeOpt)
+        {
+            case XChainTxnType::xChainCommit: {
+                auto const claimID = Json::getOptional<std::uint64_t>(
+                    msg, ripple::sfXChainClaimID);
+                if (!claimID)
+                {
+                    JLOG(j_.trace())
+                        << "pullTx callback, missing or bad claimID";
+                    return;
+                }
+
+                using namespace event;
+                XChainCommitDetected e{
+                    oppositeChainDir,
+                    *src,
+                    *txnBridge,
+                    deliveredAmt,
+                    *claimID,
+                    dst,
+                    *lgrSeq,
+                    *txnHash,
+                    ripple::tesSUCCESS,
+                    {},
+                    false};
+                push(std::move(e));
+            }
+            break;
+            case XChainTxnType::xChainCreateAccount: {
+                auto const createCount = rpcResultParse::parseCreateCount(meta);
+                if (!createCount)
+                {
+                    JLOG(j_.trace())
+                        << "pullTx callback, missing or bad createCount";
+                    return;
+                }
+                auto const rewardAmt = rpcResultParse::parseRewardAmt(msg);
+                if (!rewardAmt)
+                {
+                    JLOG(j_.trace())
+                        << "pullTx callback, missing or bad rewardAmount";
+                    return;
+                }
+                if (!dst)
+                {
+                    JLOG(j_.trace()) << "pullTx callback, missing or bad "
+                                        "destination account";
+                    return;
+                }
+                using namespace event;
+                XChainAccountCreateCommitDetected e{
+                    oppositeChainDir,
+                    *src,
+                    *txnBridge,
+                    deliveredAmt,
+                    *rewardAmt,
+                    *createCount,
+                    *dst,
+                    *lgrSeq,
+                    *txnHash,
+                    ripple::tesSUCCESS,
+                    {},
+                    false};
+                push(std::move(e));
+            }
+            break;
+            default:
+                JLOG(j_.trace()) << "pullTx callback, wrong transaction type";
+                return;
+        }
+    };
+
+    Json::Value request;
+    request[ripple::jss::transaction] = to_string(txHash);
+    chains_[ct].listener_->send("tx", request, callback);
+}
 
 Submission::Submission(
     uint32_t lastLedgerSeq,
